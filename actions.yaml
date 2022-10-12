@@ -1,0 +1,10 @@
+# Copyright 2022 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+tctl:
+  description: Run the tctl command.
+  params:
+    args:
+      type: string
+      description: The command line arguments.
+  required: [args]
