@@ -4,7 +4,7 @@
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
 import json
-from unittest import TestCase
+from unittest import TestCase, mock
 
 from ops.model import ActiveStatus, BlockedStatus
 from ops.testing import Harness
@@ -42,10 +42,28 @@ class TestCharm(TestCase):
             harness.model.unit.status, BlockedStatus("admin:temporal relation: database connections info not available")
         )
 
+    def test_schema_created_but_no_temporal_relation(self):
+        """The state is blocked when creating schemas but losing the admin relation."""
+        harness = self.harness
+
+        with mock.patch("charm.exec"):
+            simulate_lifecycle(harness)
+
+        # The BlockedStatus is set with a message.
+        self.assertEqual(harness.model.unit.status, BlockedStatus("admin:temporal relation: not available"))
+
     def test_ready(self):
         """The pebble plan is correctly generated when the charm is ready."""
         harness = self.harness
-        simulate_lifecycle(harness)
+
+        # Add the temporal relation.
+        harness.add_relation("admin", "temporal")
+
+        with mock.patch("charm.exec") as exec:
+            simulate_lifecycle(harness)
+        # Exec is called 4 times: once for schema initializationa and once for
+        # migrations for both the temporal and the visibility databases.
+        self.assertEqual(exec.call_count, 4)
 
         # No pebble plans are used by this charm.
         got_plan = harness.get_container_pebble_plan("temporal-admin").to_dict()

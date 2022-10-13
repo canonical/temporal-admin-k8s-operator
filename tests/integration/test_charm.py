@@ -2,6 +2,8 @@
 # Copyright 2022 Canonical Ltd Ltd.
 # See LICENSE file for licensing details.
 
+# More extensive integration tests for this charm are at
+# <https://github.com/canonical/temporal-k8s-operator/blob/main/tests/integration/test_charm.py>.
 
 import logging
 from pathlib import Path
@@ -17,7 +19,7 @@ APP_NAME = METADATA["name"]
 
 
 @pytest.fixture(name="deploy", scope="module")
-async def deploy(ops_test: OpsTest, bundle_path: Path):
+async def deploy(ops_test: OpsTest):
     charm = await ops_test.build_charm(".")
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
@@ -29,16 +31,6 @@ async def deploy(ops_test: OpsTest, bundle_path: Path):
 @pytest.mark.abort_on_fail
 @pytest.mark.usefixtures("deploy")
 class TestDeployment:
-    async def test_application_is_up(self, ops_test: OpsTest):
-        """The app is up and running."""
-        # TODO(frankban): do something like the following.
-
-        # import urllib.request
-
-        # status = await ops_test.model.get_status()  # noqa: F821
-        # address = status["applications"][APP_NAME]["units"][f"{APP_NAME}/0"]["address"]
-
-        # url = f"http://{address}"
-        # logger.info("querying app address: %s", url)
-        # response = urllib.request.urlopen(url, data=None, timeout=2.0)
-        # assert response.code == 200
+    async def test_tctl_action(self, ops_test: OpsTest):
+        """Is it possible to run tctl command via the action."""
+        # TODO(frankban): implement this test.
