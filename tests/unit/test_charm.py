@@ -46,7 +46,7 @@ class TestCharm(TestCase):
         """The state is blocked when creating schemas but losing the admin relation."""
         harness = self.harness
 
-        with mock.patch("charm.exec"):
+        with mock.patch("charm.execute"):
             simulate_lifecycle(harness)
 
         # The BlockedStatus is set with a message.
@@ -59,11 +59,11 @@ class TestCharm(TestCase):
         # Add the temporal relation.
         harness.add_relation("admin", "temporal")
 
-        with mock.patch("charm.exec") as exec:
+        with mock.patch("charm.execute") as execute:
             simulate_lifecycle(harness)
         # Exec is called 4 times: once for schema initializationa and once for
         # migrations for both the temporal and the visibility databases.
-        self.assertEqual(exec.call_count, 4)
+        self.assertEqual(execute.call_count, 4)
 
         # No pebble plans are used by this charm.
         got_plan = harness.get_container_pebble_plan("temporal-admin").to_dict()

@@ -82,7 +82,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
         args = event.params["args"].split()
         try:
-            output = exec(container, "tctl", *args)
+            output = execute(container, "tctl", *args)
         except Exception as err:
             event.fail(f"command failed: {err}")
             return
@@ -109,7 +109,7 @@ class TemporalAdminK8SCharm(CharmBase):
         }
         for key, database_connection in self._state.database_connections.items():
             logger.info(f"initializing {key} schema")
-            exec(
+            execute(
                 container,
                 "temporal-sql-tool",
                 "--plugin",
@@ -128,7 +128,7 @@ class TemporalAdminK8SCharm(CharmBase):
                 "-v",
                 "0.0",
             )
-            exec(
+            execute(
                 container,
                 "temporal-sql-tool",
                 "--plugin",
@@ -163,7 +163,7 @@ class TemporalAdminK8SCharm(CharmBase):
         self.unit.status = ActiveStatus()
 
 
-def exec(container, command, *args):
+def execute(container, command, *args):
     """Execute the given command in the given container.
 
     Log the output and any warnings.
