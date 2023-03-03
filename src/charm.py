@@ -74,13 +74,13 @@ class TemporalAdminK8SCharm(CharmBase):
     @log_event_handler
     def _on_tctl_action(self, event):
         """Run the tctl command line tool."""
-        # TODO(frankban): make this work.
         container = self.unit.get_container(self.name)
         if not container.can_connect():
             event.fail("cannot connect to container")
             return
 
-        args = event.params["args"].split()
+        # TODO(kelkawi-a): do not assume the app is always deployed with this name.
+        args = ["--address", "temporal-k8s:7233", *event.params["args"].split()]
         try:
             output = execute(container, "tctl", *args)
         except Exception as err:
