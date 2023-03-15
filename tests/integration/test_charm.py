@@ -44,9 +44,18 @@ async def deploy(ops_test: OpsTest):
             apps=["postgresql-k8s"], status="active", raise_on_blocked=False, timeout=600
         )
 
-        await ops_test.model.relate(f"{APP_NAME_SERVER}:db", "postgresql-k8s:db")
-        await ops_test.model.relate(f"{APP_NAME_SERVER}:visibility", "postgresql-k8s:db")
-        await ops_test.model.relate(f"{APP_NAME_SERVER}:admin", f"{APP_NAME}:admin")
+        await ops_test.model.integrate(f"{APP_NAME_SERVER}:db", "postgresql-k8s:db")
+        await ops_test.model.integrate(f"{APP_NAME_SERVER}:visibility", "postgresql-k8s:db")
+        await ops_test.model.integrate(f"{APP_NAME_SERVER}:admin", f"{APP_NAME}:admin")
+
+        await ops_test.juju(
+            "exec",
+            "--unit",
+            "temporal-k8s/0",
+            "--",
+            "open-port",
+            "7233",
+        )
 
         await ops_test.model.wait_for_idle(apps=[APP_NAME_SERVER], status="active", raise_on_blocked=False, timeout=600)
 
