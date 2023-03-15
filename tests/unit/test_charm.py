@@ -13,10 +13,10 @@ from charm import TemporalAdminK8SCharm
 
 
 class TestCharm(TestCase):
-
-    maxDiff = None
+    """Unit tests."""
 
     def setUp(self):
+        """Set up for the unit tests."""
         self.harness = Harness(TemporalAdminK8SCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.set_can_connect("temporal-admin", True)
@@ -74,7 +74,11 @@ class TestCharm(TestCase):
 
 
 def simulate_lifecycle(harness):
-    """Simulate a healthy charm life-cycle."""
+    """Simulate a healthy charm life-cycle.
+
+    Args:
+        harness: ops.testing.Harness object used to simulate charm lifecycle.
+    """
     # Simulate pebble readiness.
     container = harness.model.unit.get_container("temporal-admin")
     harness.charm.on.temporal_admin_pebble_ready.emit(container)

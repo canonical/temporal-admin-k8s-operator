@@ -18,10 +18,25 @@ logger = logging.getLogger(__name__)
 
 
 def log_event_handler(method):
-    """Log when a event handler method is executed."""
+    """Log when an event handler method is executed.
+
+    Args:
+        method: method wrapped by the decorator.
+
+    Returns:
+        Decorator wrapper.
+    """
 
     @functools.wraps(method)
     def decorated(self, event):
+        """Logging decorator method.
+
+        Args:
+            event: The event triggered when the relation changes.
+
+        Returns:
+            Decorated method.
+        """
         logger.debug(f"running {method.__name__}")
         try:
             return method(self, event)
@@ -37,6 +52,11 @@ class TemporalAdminK8SCharm(CharmBase):
     _state = framework.StoredState()
 
     def __init__(self, *args):
+        """Construct.
+
+        Args:
+            args: Ignore.
+        """
         super().__init__(*args)
         self.name = "temporal-admin"
 
@@ -51,12 +71,20 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_install(self, event):
-        """Install temporal admin tools."""
+        """Install temporal admin tools.
+
+        Args:
+            event: The event triggered when the relation changed.
+        """
         self.unit.status = MaintenanceStatus("installing temporal admin tools")
 
     @log_event_handler
     def _on_temporal_admin_pebble_ready(self, event):
-        """Handle workload being ready."""
+        """Handle workload being ready.
+
+        Args:
+            event: The event triggered when the relation changed.
+        """
         self._setup_db_schemas(event)
 
     @log_event_handler
@@ -65,6 +93,9 @@ class TemporalAdminK8SCharm(CharmBase):
 
         Get reported database connection info. Then use that info to set up the
         schema. Then report back that the schema is ready.
+
+        Args:
+            event: The event triggered when the relation changed.
         """
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
@@ -73,7 +104,11 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_tctl_action(self, event):
-        """Run the tctl command line tool."""
+        """Run the tctl command line tool.
+
+        Args:
+            event: The event triggered when the relation changed.
+        """
         container = self.unit.get_container(self.name)
         if not container.can_connect():
             event.fail("cannot connect to container")
@@ -90,7 +125,11 @@ class TemporalAdminK8SCharm(CharmBase):
         event.set_results({"result": "command succeeded", "output": output})
 
     def _setup_db_schemas(self, event):
-        """Initialize the db schemas if db connections info is available."""
+        """Initialize the db schemas if db connections info is available.
+
+        Args:
+            event: The event triggered when the relation changed.
+        """
         if not self.model.unit.is_leader():
             return
 
@@ -167,7 +206,14 @@ def execute(container, command, *args):
     """Execute the given command in the given container.
 
     Log the output and any warnings.
-    Return the output.
+
+    Args:
+        container: Container to execute command in.
+        command: Command to be executed.
+        args: Additional arguments needed for command execution.
+
+    Returns:
+        Output from executing the command.
     """
     cmd = [command] + list(args)
     proc = container.exec(cmd, timeout=60)
