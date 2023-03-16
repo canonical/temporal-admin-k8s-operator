@@ -12,6 +12,7 @@ description: |
   the successful execution of services and applications (using workflows).
 maintainers: 
   - Commercial Systems <jaas-crew@lists.canonical.com>
+docs: https://discourse.charmhub.io/t/temporal-admin-documentation-overview/8939
 tags:
   - temporal
   - workflow
