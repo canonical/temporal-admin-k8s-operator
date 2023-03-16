@@ -5,18 +5,25 @@
 # https://juju.is/docs/sdk/metadata-reference
 
 name: temporal-admin-k8s
-display-name: Temporal admin tools
+display-name: Temporal Admin Tools
 summary: Temporal admin tools operator
 description: |
   Temporal is a developer-first, open source platform that ensures
   the successful execution of services and applications (using workflows).
-maintainer: Commercial Systems <jaas-crew@lists.canonical.com>
+maintainers: 
+  - Commercial Systems <jaas-crew@lists.canonical.com>
+docs: https://discourse.charmhub.io/t/temporal-admin-documentation-overview/8939
 tags:
+  - temporal
   - workflow
   - task
   - activities
   - development
   - admin
+issues: https://github.com/canonical/temporal-admin-k8s-operator/issues
+assumes:
+  - juju >= 3.1
+  - k8s-api
 
 provides:
   admin:

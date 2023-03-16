@@ -18,7 +18,7 @@ wraps the versions distributed by
 ## Usage
 
 Please check the
-[Temporal server documentation](https://github.com/canonical/temporal-k8s-operator/blob/main/README.md)
+[Temporal server operator](https://charmhub.io/temporal-k8s)
 for usage instructions.
 
 ## Contributing
