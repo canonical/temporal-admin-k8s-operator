@@ -13,7 +13,13 @@ from charm import TemporalAdminK8SCharm
 
 
 class TestCharm(TestCase):
-    """Unit tests."""
+    """Unit tests.
+
+    Attrs:
+        maxDiff: Specifies max difference shown by failed tests.
+    """
+
+    maxDiff = None
 
     def setUp(self):
         """Set up for the unit tests."""
