@@ -13,6 +13,7 @@ on:
     branches:
       - main
       - track/**
+      - ci-test
 
 jobs:
   publish-to-edge:
@@ -20,3 +21,6 @@ jobs:
     secrets: inherit
     with:
       trivy-image-config: "trivy.yaml"
+      integration-test-provider: microk8s
+      integration-test-provider-channel: 1.25-strict/stable
+      integration-test-juju-channel: 3.1/stable
