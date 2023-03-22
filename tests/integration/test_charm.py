@@ -6,7 +6,7 @@
 # <https://github.com/canonical/temporal-k8s-operator/blob/main/tests/integration/test_charm.py>.
 
 
-"""Temporal charm integration tests."""
+"""Temporal admin charm integration tests."""
 
 import logging
 from pathlib import Path

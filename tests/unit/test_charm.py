@@ -4,7 +4,7 @@
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
 
-"""Temporal charm unit tests."""
+"""Temporal admin charm unit tests."""
 
 # pylint:disable=protected-access
 
