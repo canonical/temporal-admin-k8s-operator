@@ -3,6 +3,9 @@
 #
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
+
+"""Temporal charm unit tests."""
+
 import json
 from unittest import TestCase, mock
 
@@ -45,7 +48,8 @@ class TestCharm(TestCase):
 
         # The BlockStatus is set with a message.
         self.assertEqual(
-            harness.model.unit.status, BlockedStatus("admin:temporal relation: database connections info not available")
+            harness.model.unit.status,
+            BlockedStatus("admin:temporal relation: database connections info not available"),
         )
 
     def test_schema_created_but_no_temporal_relation(self):
@@ -56,7 +60,9 @@ class TestCharm(TestCase):
             simulate_lifecycle(harness)
 
         # The BlockedStatus is set with a message.
-        self.assertEqual(harness.model.unit.status, BlockedStatus("admin:temporal relation: not available"))
+        self.assertEqual(
+            harness.model.unit.status, BlockedStatus("admin:temporal relation: not available")
+        )
 
     def test_ready(self):
         """The pebble plan is correctly generated when the charm is ready."""
@@ -124,7 +130,11 @@ def simulate_lifecycle(harness):
     relation = type(
         "Relation",
         (),
-        {"data": {app: {"database_connections": json.dumps(database_connections)}}, "name": "admin", "id": 42},
+        {
+            "data": {app: {"database_connections": json.dumps(database_connections)}},
+            "name": "admin",
+            "id": 42,
+        },
     )()
     event = type("Event", (), {"app": app, "relation": relation})()
     harness.charm._on_admin_relation_changed(event)
