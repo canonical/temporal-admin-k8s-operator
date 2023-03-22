@@ -6,6 +6,8 @@
 
 """Temporal charm unit tests."""
 
+# pylint:disable=protected-access
+
 import json
 from unittest import TestCase, mock
 
