@@ -62,9 +62,7 @@ class TestCharm(TestCase):
             simulate_lifecycle(harness)
 
         # The BlockedStatus is set with a message.
-        self.assertEqual(
-            harness.model.unit.status, BlockedStatus("admin:temporal relation: not available")
-        )
+        self.assertEqual(harness.model.unit.status, BlockedStatus("admin:temporal relation: not available"))
 
     def test_ready(self):
         """The pebble plan is correctly generated when the charm is ready."""

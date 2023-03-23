@@ -26,9 +26,7 @@ APP_NAME = METADATA["name"]
 async def deploy(ops_test: OpsTest):
     """The app is up and running."""
     charm = await ops_test.build_charm(".")
-    resources = {
-        "temporal-admin-image": METADATA["containers"]["temporal-admin"]["upstream-source"]
-    }
+    resources = {"temporal-admin-image": METADATA["containers"]["temporal-admin"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
     await ops_test.model.deploy("temporal-k8s", channel="beta")
@@ -56,9 +54,7 @@ async def deploy(ops_test: OpsTest):
             "7233",
         )
 
-        await ops_test.model.wait_for_idle(
-            apps=["temporal-k8s"], status="active", raise_on_blocked=False, timeout=600
-        )
+        await ops_test.model.wait_for_idle(apps=["temporal-k8s"], status="active", raise_on_blocked=False, timeout=600)
 
         assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
 
@@ -79,11 +75,7 @@ class TestDeployment:
 
         logger.info(f"tctl result: {result}")
 
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME], status="active", raise_on_blocked=False, timeout=600
-        )
+        await ops_test.model.wait_for_idle(apps=[APP_NAME], status="active", raise_on_blocked=False, timeout=600)
 
         assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
-        assert ("output" in result) and "Namespace default successfully registered" in result[
-            "output"
-        ]
+        assert ("output" in result) and "Namespace default successfully registered" in result["output"]

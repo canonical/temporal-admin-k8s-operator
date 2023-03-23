@@ -62,9 +62,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
         # Handle basic charm lifecycle.
         self.framework.observe(self.on.install, self._on_install)
-        self.framework.observe(
-            self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready
-        )
+        self.framework.observe(self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready)
         self.framework.observe(self.on.tctl_action, self._on_tctl_action)
 
         # Handle admin:temporal relation.
@@ -101,9 +99,7 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = (
-            json.loads(database_connections) if database_connections else None
-        )
+        self._state.database_connections = json.loads(database_connections) if database_connections else None
         self._setup_db_schemas(event)
 
     @log_event_handler
@@ -143,9 +139,7 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         if not self._state.database_connections:
-            self.unit.status = BlockedStatus(
-                "admin:temporal relation: database connections info not available"
-            )
+            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
         schema_dirs = {
@@ -197,9 +191,7 @@ class TemporalAdminK8SCharm(CharmBase):
         if not admin_relations:
             # Can this happen? Probably in a race between hook execution and
             # removed relation?
-            logger.debug(
-                "admin:temporal: not notifying schema readiness: admin relation not available"
-            )
+            logger.debug("admin:temporal: not notifying schema readiness: admin relation not available")
             self.unit.status = BlockedStatus("admin:temporal relation: not available")
             return
         logger.info("notifying schemas are ready")
