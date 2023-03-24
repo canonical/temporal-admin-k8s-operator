@@ -1,5 +1,5 @@
 [![Charmhub Badge](https://charmhub.io/temporal-admin-k8s/badge.svg)](https://charmhub.io/temporal-admin-k8s)
-[![Release Edge](https://github.com/canonical/temporal-admin-k8s-operator/actions/workflows/test_and_publish_charm.yaml)](https://github.com/canonical/temporal-admin-k8s-operator/actions/workflows/test_and_publish_charm.yaml)
+[![Release Edge](https://github.com/canonical/temporal-admin-k8s-operator/actions/workflows/test_and_publish_charm.yaml/badge.svg)](https://github.com/canonical/temporal-admin-k8s-operator/actions/workflows/test_and_publish_charm.yaml)
 
 # Temporal Admin K8s Operator
 
