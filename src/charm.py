@@ -29,7 +29,7 @@ def log_event_handler(method):
 
     @functools.wraps(method)
     def decorated(self, event):
-        """Logging decorator method.
+        """Log decorator method.
 
         Args:
             event: The event triggered when the relation changes.

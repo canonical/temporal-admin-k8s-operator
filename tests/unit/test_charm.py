@@ -3,6 +3,11 @@
 #
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
+
+"""Temporal admin charm unit tests."""
+
+# pylint:disable=protected-access
+
 import json
 from unittest import TestCase, mock
 
@@ -13,7 +18,13 @@ from charm import TemporalAdminK8SCharm
 
 
 class TestCharm(TestCase):
-    """Unit tests."""
+    """Unit tests.
+
+    Attrs:
+        maxDiff: Specifies max difference shown by failed tests.
+    """
+
+    maxDiff = None
 
     def setUp(self):
         """Set up for the unit tests."""
@@ -39,7 +50,8 @@ class TestCharm(TestCase):
 
         # The BlockStatus is set with a message.
         self.assertEqual(
-            harness.model.unit.status, BlockedStatus("admin:temporal relation: database connections info not available")
+            harness.model.unit.status,
+            BlockedStatus("admin:temporal relation: database connections info not available"),
         )
 
     def test_schema_created_but_no_temporal_relation(self):
@@ -118,7 +130,11 @@ def simulate_lifecycle(harness):
     relation = type(
         "Relation",
         (),
-        {"data": {app: {"database_connections": json.dumps(database_connections)}}, "name": "admin", "id": 42},
+        {
+            "data": {app: {"database_connections": json.dumps(database_connections)}},
+            "name": "admin",
+            "id": 42,
+        },
     )()
     event = type("Event", (), {"app": app, "relation": relation})()
     harness.charm._on_admin_relation_changed(event)
