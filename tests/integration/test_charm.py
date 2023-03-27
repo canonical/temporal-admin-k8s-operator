@@ -29,7 +29,7 @@ async def deploy(ops_test: OpsTest):
     resources = {"temporal-admin-image": METADATA["containers"]["temporal-admin"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
-    await ops_test.model.deploy("temporal-k8s", channel="beta")
+    await ops_test.model.deploy("temporal-k8s", channel="edge")
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
     await ops_test.model.deploy("postgresql-k8s", channel="edge", trust=True)
 
