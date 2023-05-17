@@ -13,6 +13,7 @@ description: |
 maintainers: 
   - Commercial Systems <jaas-crew@lists.canonical.com>
 docs: https://discourse.charmhub.io/t/temporal-admin-documentation-overview/8939
+source: https://github.com/canonical/temporal-admin-k8s-operator
 tags:
   - temporal
   - workflow
