@@ -31,7 +31,7 @@ async def deploy(ops_test: OpsTest):
     # Deploy temporal server, temporal admin and postgresql charms
     await ops_test.model.deploy("temporal-k8s", channel="edge")
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
-    await ops_test.model.deploy("postgresql-k8s", channel="edge", trust=True)
+    await ops_test.model.deploy("postgresql-k8s", channel="14", trust=True)
 
     async with ops_test.fast_forward():
         await ops_test.model.wait_for_idle(
@@ -41,8 +41,8 @@ async def deploy(ops_test: OpsTest):
             apps=["postgresql-k8s"], status="active", raise_on_blocked=False, timeout=600
         )
 
-        await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:db")
-        await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:db")
+        await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
+        await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
 
         await ops_test.juju(
