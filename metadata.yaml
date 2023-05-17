@@ -28,7 +28,7 @@ assumes:
 provides:
   admin:
     interface: temporal
-    limit: 1
+    limit: 4
 
 containers:
   temporal-admin:
