@@ -1,4 +1,4 @@
-# Copyright 2023 Canonical Ltd Ltd.
+# Copyright 2023 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 # More extensive integration tests for this charm are at
