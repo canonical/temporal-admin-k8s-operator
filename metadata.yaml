@@ -35,7 +35,7 @@ containers:
   temporal-admin:
     resource: temporal-admin-image
     # Included for simplicity in integration tests.
-    upstream-source: temporalio/admin-tools:1.18.0
+    upstream-source: temporalio/admin-tools:1.21.5
 
 resources:
   temporal-admin-image:
