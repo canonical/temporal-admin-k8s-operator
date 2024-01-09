@@ -143,8 +143,8 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         schema_dirs = {
-            "db": "/etc/temporal/schema/postgresql/v96/temporal/versioned",
-            "visibility": "/etc/temporal/schema/postgresql/v96/visibility/versioned",
+            "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
+            "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
         }
         for key, database_connection in self._state.database_connections.items():
             logger.info(f"initializing {key} schema")
