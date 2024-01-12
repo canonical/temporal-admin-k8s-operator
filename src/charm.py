@@ -114,8 +114,8 @@ class TemporalAdminK8SCharm(CharmBase):
             event.fail("cannot connect to container")
             return
 
-        # TODO(kelkawi-a): do not assume the app is always deployed with this name.
-        args = ["--address", "temporal-k8s:7236", *event.params["args"].split()]
+        server_name = self.model.config["server-name"] or "temporal-k8s"
+        args = ["--address", f"{server_name}:7236", *event.params["args"].split()]
         try:
             output = execute(container, "tctl", *args)
         except Exception as err:
