@@ -26,6 +26,10 @@ assumes:
   - juju >= 3.1
   - k8s-api
 
+peers:
+  peer:
+    interface: temporal-admin
+
 provides:
   admin:
     interface: temporal
