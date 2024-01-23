@@ -10,9 +10,11 @@ import functools
 import json
 import logging
 
-from ops import framework, main
+from ops import main
 from ops.charm import CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
+
+from state import State
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +51,6 @@ def log_event_handler(method):
 class TemporalAdminK8SCharm(CharmBase):
     """Temporal admin charm."""
 
-    _state = framework.StoredState()
-
     def __init__(self, *args):
         """Construct.
 
@@ -58,6 +58,7 @@ class TemporalAdminK8SCharm(CharmBase):
             args: Ignore.
         """
         super().__init__(*args)
+        self._state = State(self.app, lambda: self.model.get_relation("peer"))
         self.name = "temporal-admin"
 
         # Handle basic charm lifecycle.
@@ -66,8 +67,8 @@ class TemporalAdminK8SCharm(CharmBase):
         self.framework.observe(self.on.tctl_action, self._on_tctl_action)
 
         # Handle admin:temporal relation.
-        self._state.set_default(database_connections=None)
         self.framework.observe(self.on.admin_relation_changed, self._on_admin_relation_changed)
+        self.framework.observe(self.on.admin_relation_broken, self._on_admin_relation_broken)
 
     @log_event_handler
     def _on_install(self, event):
@@ -100,6 +101,16 @@ class TemporalAdminK8SCharm(CharmBase):
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
         self._state.database_connections = json.loads(database_connections) if database_connections else None
+        self._setup_db_schemas(event)
+
+    @log_event_handler
+    def _on_admin_relation_broken(self, event):
+        """Handle the admin:temporal relation being broken.
+
+        Args:
+            event: The event triggered when the relation was broken.
+        """
+        self._state.database_connections = None
         self._setup_db_schemas(event)
 
     @log_event_handler

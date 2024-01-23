@@ -60,7 +60,7 @@ class TestDeployment:
     async def test_openfga_relation(self, ops_test: OpsTest):
         """Add OpenFGA relation and authorization model."""
         await ops_test.model.applications[SERVER_APP_NAME].set_config({"auth-enabled": "true"})
-        await ops_test.model.deploy("openfga-k8s", channel="latest/edge")
+        await ops_test.model.deploy("openfga-k8s", channel="1.0/edge")
         await ops_test.model.wait_for_idle(
             apps=[SERVER_APP_NAME, "openfga-k8s"],
             status="blocked",
@@ -135,3 +135,17 @@ class TestDeployment:
         assert ops_test.model.applications[APP_NAME].status == "active"
 
         await run_tctl_action(ops_test, namespace="integrations")
+
+    async def test_remove_server(self, ops_test: OpsTest):
+        """Admin charm goes to blocked state once relation with the server charm is removed."""
+        await ops_test.model.applications[SERVER_APP_NAME].destroy()
+        await ops_test.model.block_until(lambda: SERVER_APP_NAME not in ops_test.model.applications)
+
+        await ops_test.model.wait_for_idle(
+            apps=[APP_NAME],
+            status="blocked",
+            raise_on_blocked=False,
+            timeout=300,
+        )
+
+        assert ops_test.model.applications[APP_NAME].units[0].workload_status == "blocked"
