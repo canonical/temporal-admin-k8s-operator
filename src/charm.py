@@ -17,6 +17,7 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingSta
 from state import State
 
 logger = logging.getLogger(__name__)
+WORKLOAD_VERSION = "1.21.5"
 
 
 def log_event_handler(method):
@@ -98,6 +99,10 @@ class TemporalAdminK8SCharm(CharmBase):
         Args:
             event: The event triggered when the relation changed.
         """
+        if not self._state.is_ready():
+            event.defer()
+            return
+
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
         self._state.database_connections = json.loads(database_connections) if database_connections else None
@@ -110,6 +115,10 @@ class TemporalAdminK8SCharm(CharmBase):
         Args:
             event: The event triggered when the relation was broken.
         """
+        if not self._state.is_ready():
+            event.defer()
+            return
+
         self._state.database_connections = None
         self._setup_db_schemas(event)
 
@@ -118,7 +127,7 @@ class TemporalAdminK8SCharm(CharmBase):
         """Run the tctl command line tool.
 
         Args:
-            event: The event triggered when the relation changed.
+            event: The event triggered when the action is triggered.
         """
         container = self.unit.get_container(self.name)
         if not container.can_connect():
@@ -144,6 +153,10 @@ class TemporalAdminK8SCharm(CharmBase):
         if not self.model.unit.is_leader():
             return
 
+        if not self._state.is_ready():
+            event.defer()
+            return
+
         container = self.unit.get_container(self.name)
         if not container.can_connect():
             event.defer()
@@ -159,44 +172,49 @@ class TemporalAdminK8SCharm(CharmBase):
         }
         for key, database_connection in self._state.database_connections.items():
             logger.info(f"initializing {key} schema")
-            execute(
-                container,
-                "temporal-sql-tool",
-                "--plugin",
-                "postgres",
-                "--endpoint",
-                database_connection["host"],
-                "--port",
-                database_connection["port"],
-                "--database",
-                database_connection["dbname"],
-                "--user",
-                database_connection["user"],
-                "--password",
-                database_connection["password"],
-                "setup-schema",
-                "-v",
-                "0.0",
-            )
-            execute(
-                container,
-                "temporal-sql-tool",
-                "--plugin",
-                "postgres",
-                "--endpoint",
-                database_connection["host"],
-                "--port",
-                database_connection["port"],
-                "--database",
-                database_connection["dbname"],
-                "--user",
-                database_connection["user"],
-                "--password",
-                database_connection["password"],
-                "update-schema",
-                "-d",
-                schema_dirs[key],
-            )
+            try:
+                execute(
+                    container,
+                    "temporal-sql-tool",
+                    "--plugin",
+                    "postgres",
+                    "--endpoint",
+                    database_connection["host"],
+                    "--port",
+                    database_connection["port"],
+                    "--database",
+                    database_connection["dbname"],
+                    "--user",
+                    database_connection["user"],
+                    "--password",
+                    database_connection["password"],
+                    "setup-schema",
+                    "-v",
+                    "0.0",
+                )
+                execute(
+                    container,
+                    "temporal-sql-tool",
+                    "--plugin",
+                    "postgres",
+                    "--endpoint",
+                    database_connection["host"],
+                    "--port",
+                    database_connection["port"],
+                    "--database",
+                    database_connection["dbname"],
+                    "--user",
+                    database_connection["user"],
+                    "--password",
+                    database_connection["password"],
+                    "update-schema",
+                    "-d",
+                    schema_dirs[key],
+                )
+            except Exception as e:
+                logger.error(f"Error setting up schema: {e}")
+                self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
+                return
 
         admin_relations = self.model.relations["admin"]
         if not admin_relations:
@@ -210,6 +228,7 @@ class TemporalAdminK8SCharm(CharmBase):
             logger.debug(f"admin:temporal: notifying schema readiness on relation {relation.id}")
             relation.data[self.app].update({"schema_status": "ready"})
 
+        self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
 
 
