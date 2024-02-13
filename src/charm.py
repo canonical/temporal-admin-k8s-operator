@@ -214,6 +214,7 @@ class TemporalAdminK8SCharm(CharmBase):
             except Exception as e:
                 logger.error(f"Error setting up schema: {e}")
                 self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
+                return
 
         admin_relations = self.model.relations["admin"]
         if not admin_relations:
