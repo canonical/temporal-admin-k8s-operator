@@ -17,7 +17,7 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingSta
 from state import State
 
 logger = logging.getLogger(__name__)
-WORKLOAD_VERSION = "1.21.5"
+WORKLOAD_VERSION = "1.23.1"
 
 
 def log_event_handler(method):
