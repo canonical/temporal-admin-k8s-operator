@@ -36,3 +36,19 @@ async def run_tctl_action(ops_test: OpsTest, namespace):
 
     assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
     assert ("output" in result) and f"Namespace {namespace} successfully registered" in result["output"]
+
+
+async def run_setup_schema_action(ops_test: OpsTest):
+    """Run setup schema action from the admin charm.
+
+    Args:
+        ops_test: PyTest object.
+    """
+    action = await ops_test.model.applications[APP_NAME].units[0].run_action("setup-schema")
+    result = (await action.wait()).results
+
+    logger.info(f"schema setup result: {result}")
+
+    await ops_test.model.wait_for_idle(apps=[APP_NAME], status="active", raise_on_blocked=False, timeout=600)
+
+    assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
