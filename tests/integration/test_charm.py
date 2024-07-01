@@ -13,7 +13,13 @@ import time
 
 import pytest
 import pytest_asyncio
-from helpers import APP_NAME, METADATA, SERVER_APP_NAME, run_tctl_action
+from helpers import (
+    APP_NAME,
+    METADATA,
+    SERVER_APP_NAME,
+    run_setup_schema_action,
+    run_tctl_action,
+)
 from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
@@ -56,6 +62,10 @@ class TestDeployment:
     async def test_tctl_action(self, ops_test: OpsTest):
         """Is it possible to run tctl command via the action."""
         await run_tctl_action(ops_test, namespace="default")
+
+    async def test_setup_schema_action(self, ops_test: OpsTest):
+        """Is it possible to run setup schema via the action."""
+        await run_setup_schema_action(ops_test)
 
     async def test_openfga_relation(self, ops_test: OpsTest):
         """Add OpenFGA relation and authorization model."""
