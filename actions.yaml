@@ -8,3 +8,6 @@ tctl:
       type: string
       description: The command line arguments.
   required: [args]
+
+setup-schema:
+  description: Set up the database schema.
