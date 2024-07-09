@@ -30,7 +30,7 @@ async def deploy(ops_test: OpsTest):
     """The app is up and running."""
     await ops_test.model.set_config({"update-status-hook-interval": "1m"})
     charm = await ops_test.build_charm(".")
-    resources = {"temporal-admin-image": METADATA["containers"]["temporal-admin"]["upstream-source"]}
+    resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
     await ops_test.model.deploy(SERVER_APP_NAME, channel="edge", config={"num-history-shards": 1})
