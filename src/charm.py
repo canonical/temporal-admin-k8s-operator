@@ -65,11 +65,14 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle basic charm lifecycle.
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready)
-        self.framework.observe(self.on.tctl_action, self._on_tctl_action)
 
         # Handle admin:temporal relation.
         self.framework.observe(self.on.admin_relation_changed, self._on_admin_relation_changed)
         self.framework.observe(self.on.admin_relation_broken, self._on_admin_relation_broken)
+
+        # Handle action
+        self.framework.observe(self.on.tctl_action, self._on_tctl_action)
+        self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
 
     @log_event_handler
     def _on_install(self, event):
@@ -87,7 +90,15 @@ class TemporalAdminK8SCharm(CharmBase):
         Args:
             event: The event triggered when the relation changed.
         """
-        self._setup_db_schemas(event)
+        # Auto schema set up is only need once initially.
+        if self._state.is_initial_schema_ready:
+            self.unit.status = ActiveStatus()
+            return
+
+        try:
+            self._setup_db_schemas(event)
+        except Exception:
+            self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
 
     @log_event_handler
     def _on_admin_relation_changed(self, event):
@@ -120,6 +131,7 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         self._state.database_connections = None
+        self._state.is_initial_schema_ready = False
         self._setup_db_schemas(event)
 
     @log_event_handler
@@ -144,11 +156,26 @@ class TemporalAdminK8SCharm(CharmBase):
 
         event.set_results({"result": "command succeeded", "output": output})
 
+    @log_event_handler
+    def _on_setup_schema_action(self, event):
+        """Set up the database schemas.
+
+        Args:
+            event: The event triggered when the action is triggered.
+        """
+        try:
+            self._setup_db_schemas(event)
+        except Exception as err:
+            event.fail(err)
+
     def _setup_db_schemas(self, event):
         """Initialize the db schemas if db connections info is available.
 
         Args:
             event: The event triggered when the relation changed.
+
+        Raises:
+            Exception: if the schemas were not set up successfully.
         """
         if not self.model.unit.is_leader():
             return
@@ -213,8 +240,7 @@ class TemporalAdminK8SCharm(CharmBase):
                 )
             except Exception as e:
                 logger.error(f"Error setting up schema: {e}")
-                self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
-                return
+                raise Exception from e
 
         admin_relations = self.model.relations["admin"]
         if not admin_relations:
@@ -228,6 +254,7 @@ class TemporalAdminK8SCharm(CharmBase):
             logger.debug(f"admin:temporal: notifying schema readiness on relation {relation.id}")
             relation.data[self.app].update({"schema_status": "ready"})
 
+        self._state.is_initial_schema_ready = True
         self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
 
