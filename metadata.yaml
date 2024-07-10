@@ -38,10 +38,10 @@ provides:
 containers:
   temporal-admin:
     resource: temporal-admin-image
-    # Included for simplicity in integration tests.
-    upstream-source: temporalio/admin-tools:1.23.1
 
 resources:
   temporal-admin-image:
     type: oci-image
     description: OCI image for Temporal admin tools
+    # Included for simplicity in integration tests.
+    upstream-source: temporalio/admin-tools:1.23.1
