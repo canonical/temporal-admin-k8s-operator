@@ -44,4 +44,4 @@ resources:
     type: oci-image
     description: OCI image for Temporal admin tools
     # Included for simplicity in integration tests.
-    upstream-source: temporalio/admin-tools:1.23.1
+    upstream-source: temporalio/admin-tools:1.23.1.0
