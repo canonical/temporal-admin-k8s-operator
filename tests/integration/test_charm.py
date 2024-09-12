@@ -36,13 +36,22 @@ async def deploy(ops_test: OpsTest):
     await ops_test.model.deploy(SERVER_APP_NAME, channel="edge", config={"num-history-shards": 1})
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
     await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
+    await ops_test.model.deploy("self-signed-certificates", channel="latest/stable")
 
     async with ops_test.fast_forward():
         await ops_test.model.wait_for_idle(
             apps=[SERVER_APP_NAME, APP_NAME], status="blocked", raise_on_blocked=False, timeout=600
         )
         await ops_test.model.wait_for_idle(
-            apps=["postgresql-k8s"], status="active", raise_on_blocked=False, timeout=600
+            apps=["postgresql-k8s", "self-signed-certificates"], status="active", raise_on_blocked=False, timeout=600
+        )
+
+        await ops_test.model.integrate("self-signed-certificates", "postgresql-k8s")
+        await ops_test.model.wait_for_idle(
+            apps=["self-signed-certificates", "postgresql-k8s"],
+            status="active",
+            raise_on_blocked=False,
+            timeout=300,
         )
 
         await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
@@ -66,24 +75,6 @@ class TestDeployment:
     async def test_setup_schema_action(self, ops_test: OpsTest):
         """Is it possible to run setup schema via the action."""
         await run_setup_schema_action(ops_test)
-
-    async def test_database_tls(self, ops_test: OpsTest):
-        """Is it possible to enable TLS on the database."""
-        await ops_test.model.deploy("self-signed-certificates", channel="latest/stable")
-        await ops_test.model.wait_for_idle(
-            apps=["self-signed-certificates"],
-            status="active",
-            raise_on_blocked=False,
-            timeout=300,
-        )
-
-        await ops_test.model.integrate("self-signed-certificates", "openfga-k8s")
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME, "self-signed-certificates", "postgresql-k8s"],
-            status="active",
-            raise_on_blocked=False,
-            timeout=300,
-        )
 
     async def test_openfga_relation(self, ops_test: OpsTest):
         """Add OpenFGA relation and authorization model."""
