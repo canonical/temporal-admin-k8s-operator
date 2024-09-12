@@ -10,6 +10,7 @@
 import json
 import logging
 import time
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -20,16 +21,27 @@ from helpers import (
     run_setup_schema_action,
     run_tctl_action,
 )
+from pytest import FixtureRequest
 from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
 
 
+@pytest_asyncio.fixture(scope="module", name="charm")
+async def charm_fixture(request: FixtureRequest, ops_test: OpsTest) -> str | Path:
+    """Fetch the path to charm."""
+    charms = request.config.getoption("--charm-file")
+    if not charms:
+        charm = await ops_test.build_charm(".")
+        assert charm, "Charm not built"
+        return charm
+    return charms[0]
+
+
 @pytest_asyncio.fixture(name="deploy", scope="module")
-async def deploy(ops_test: OpsTest):
+async def deploy(ops_test: OpsTest, charm: str):
     """The app is up and running."""
     await ops_test.model.set_config({"update-status-hook-interval": "1m"})
-    charm = await ops_test.build_charm(".")
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
@@ -47,18 +59,23 @@ async def deploy(ops_test: OpsTest):
         )
 
         await ops_test.model.integrate("self-signed-certificates", "postgresql-k8s")
+        await ops_test.model.integrate(f"{APP_NAME}:db", "postgresql-k8s:database")
+        await ops_test.model.integrate(f"{APP_NAME}:visibility", "postgresql-k8s:database")
         await ops_test.model.wait_for_idle(
             apps=["self-signed-certificates", "postgresql-k8s"],
             status="active",
             raise_on_blocked=False,
             timeout=300,
         )
+        await ops_test.model.wait_for_idle(apps=[APP_NAME], status="blocked", raise_on_blocked=False, timeout=300)
 
         await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
 
-        await ops_test.model.wait_for_idle(apps=[SERVER_APP_NAME], status="active", raise_on_blocked=False, timeout=600)
+        await ops_test.model.wait_for_idle(
+            apps=[APP_NAME, SERVER_APP_NAME], status="active", raise_on_blocked=False, timeout=300
+        )
 
         assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
 

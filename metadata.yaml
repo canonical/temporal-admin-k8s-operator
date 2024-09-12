@@ -23,12 +23,20 @@ tags:
   - admin
 issues: https://github.com/canonical/temporal-admin-k8s-operator/issues
 assumes:
-  - juju >= 3.1
+  - juju >= 3.4
   - k8s-api
 
 peers:
   peer:
     interface: temporal-admin
+
+requires:
+  db:
+    interface: postgresql_client
+    limit: 1
+  visibility:
+    interface: postgresql_client
+    limit: 1
 
 provides:
   admin:

@@ -6,47 +6,20 @@
 
 """Charm definition and helpers."""
 
-import functools
 import json
 import logging
 
+from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from ops import main
 from ops.charm import CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 
+from literals import DB_NAME, VISIBILITY_DB_NAME, WORKLOAD_VERSION
+from log import log_event_handler
+from relations.postgresql import Postgresql
 from state import State
 
 logger = logging.getLogger(__name__)
-WORKLOAD_VERSION = "1.23.1"
-
-
-def log_event_handler(method):
-    """Log when an event handler method is executed.
-
-    Args:
-        method: method wrapped by the decorator.
-
-    Returns:
-        Decorator wrapper.
-    """
-
-    @functools.wraps(method)
-    def decorated(self, event):
-        """Log decorator method.
-
-        Args:
-            event: The event triggered when the relation changes.
-
-        Returns:
-            Decorated method.
-        """
-        logger.debug(f"running {method.__name__}")
-        try:
-            return method(self, event)
-        finally:
-            logger.debug(f"completed {method.__name__}")
-
-    return decorated
 
 
 class TemporalAdminK8SCharm(CharmBase):
@@ -74,7 +47,14 @@ class TemporalAdminK8SCharm(CharmBase):
         self.framework.observe(self.on.tctl_action, self._on_tctl_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
 
-    @log_event_handler
+        # Handle postgresql relation.
+        self.db = DatabaseRequires(self, relation_name="db", database_name=DB_NAME, extra_user_roles="admin")
+        self.visibility = DatabaseRequires(
+            self, relation_name="visibility", database_name=VISIBILITY_DB_NAME, extra_user_roles="admin"
+        )
+        self.postgresql = Postgresql(self)
+
+    @log_event_handler(logger)
     def _on_install(self, event):
         """Install temporal admin tools.
 
@@ -83,7 +63,7 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         self.unit.status = MaintenanceStatus("installing temporal admin tools")
 
-    @log_event_handler
+    @log_event_handler(logger)
     def _on_temporal_admin_pebble_ready(self, event):
         """Handle workload being ready.
 
@@ -100,7 +80,7 @@ class TemporalAdminK8SCharm(CharmBase):
         except Exception:
             self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
 
-    @log_event_handler
+    @log_event_handler(logger)
     def _on_admin_relation_changed(self, event):
         """Handle changes on the admin:temporal relation.
 
@@ -116,10 +96,12 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = json.loads(database_connections) if database_connections else None
+        self._state.database_connections_from_server = (
+            json.loads(database_connections) if database_connections else None
+        )
         self._setup_db_schemas(event)
 
-    @log_event_handler
+    @log_event_handler(logger)
     def _on_admin_relation_broken(self, event):
         """Handle the admin:temporal relation being broken.
 
@@ -130,11 +112,11 @@ class TemporalAdminK8SCharm(CharmBase):
             event.defer()
             return
 
-        self._state.database_connections = None
+        self._state.database_connections_from_server = None
         self._state.is_initial_schema_ready = False
         self._setup_db_schemas(event)
 
-    @log_event_handler
+    @log_event_handler(logger)
     def _on_tctl_action(self, event):
         """Run the tctl command line tool.
 
@@ -151,12 +133,13 @@ class TemporalAdminK8SCharm(CharmBase):
         try:
             output = execute(container, "tctl", *args)
         except Exception as err:
+            logger.error(f"tctl command failed: {err}")
             event.fail(f"command failed: {err}")
             return
 
         event.set_results({"result": "command succeeded", "output": output})
 
-    @log_event_handler
+    @log_event_handler(logger)
     def _on_setup_schema_action(self, event):
         """Set up the database schemas.
 
@@ -189,15 +172,22 @@ class TemporalAdminK8SCharm(CharmBase):
             event.defer()
             return
 
-        if not self._state.database_connections:
+        if not self._state.database_connections_from_server:
             self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
+            return
+
+        # delete this after testing
+        if not self._state.database_connections_from_db:
+            self.unit.status = BlockedStatus("admin:db relation: database connections info not available")
             return
 
         schema_dirs = {
             "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
             "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
         }
-        for key, database_connection in self._state.database_connections.items():
+
+        database_connections = self._state.database_connections_from_db
+        for key, database_connection in database_connections.items():
             logger.info(f"initializing {key} schema")
             try:
                 execute(
@@ -205,6 +195,8 @@ class TemporalAdminK8SCharm(CharmBase):
                     "temporal-sql-tool",
                     "--plugin",
                     "postgres",
+                    "--tls",
+                    "--tls-disable-host-verification",
                     "--endpoint",
                     database_connection["host"],
                     "--port",
@@ -224,6 +216,8 @@ class TemporalAdminK8SCharm(CharmBase):
                     "temporal-sql-tool",
                     "--plugin",
                     "postgres",
+                    "--tls",
+                    "--tls-disable-host-verification",
                     "--endpoint",
                     database_connection["host"],
                     "--port",
