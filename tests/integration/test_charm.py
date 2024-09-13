@@ -48,21 +48,26 @@ async def deploy(ops_test: OpsTest, charm: str):
     await ops_test.model.deploy(SERVER_APP_NAME, channel="edge", config={"num-history-shards": 1})
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
     await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
-    await ops_test.model.deploy("self-signed-certificates", channel="latest/stable")
+    # await ops_test.model.deploy("self-signed-certificates", channel="latest/stable")
 
     async with ops_test.fast_forward():
         await ops_test.model.wait_for_idle(
             apps=[SERVER_APP_NAME, APP_NAME], status="blocked", raise_on_blocked=False, timeout=600
         )
+        # await ops_test.model.wait_for_idle(
+        #     apps=["postgresql-k8s", "self-signed-certificates"], status="active", raise_on_blocked=False, timeout=600
+        # )
+
         await ops_test.model.wait_for_idle(
-            apps=["postgresql-k8s", "self-signed-certificates"], status="active", raise_on_blocked=False, timeout=600
+            apps=["postgresql-k8s"], status="active", raise_on_blocked=False, timeout=600
         )
 
-        await ops_test.model.integrate("self-signed-certificates", "postgresql-k8s")
+        # await ops_test.model.integrate("self-signed-certificates", "postgresql-k8s")
         await ops_test.model.integrate(f"{APP_NAME}:db", "postgresql-k8s:database")
         await ops_test.model.integrate(f"{APP_NAME}:visibility", "postgresql-k8s:database")
         await ops_test.model.wait_for_idle(
-            apps=["self-signed-certificates", "postgresql-k8s"],
+            # apps=["self-signed-certificates", "postgresql-k8s"],
+            apps=["postgresql-k8s"],
             status="active",
             raise_on_blocked=False,
             timeout=300,
