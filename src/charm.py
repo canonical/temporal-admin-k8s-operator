@@ -176,17 +176,17 @@ class TemporalAdminK8SCharm(CharmBase):
             self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
-        # delete this after testing
-        if not self._state.database_connections_from_db:
-            self.unit.status = BlockedStatus("admin:db relation: database connections info not available")
-            return
+        # # delete this after testing
+        # if not self._state.database_connections_from_db:
+        #     self.unit.status = BlockedStatus("admin:db relation: database connections info not available")
+        #     return
 
         schema_dirs = {
             "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
             "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
         }
 
-        database_connections = self._state.database_connections_from_db
+        database_connections = self._state.database_connections_from_server
         for key, database_connection in database_connections.items():
             logger.info(f"initializing {key} schema")
             try:

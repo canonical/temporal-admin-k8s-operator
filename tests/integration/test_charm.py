@@ -63,16 +63,16 @@ async def deploy(ops_test: OpsTest, charm: str):
         )
 
         # await ops_test.model.integrate("self-signed-certificates", "postgresql-k8s")
-        await ops_test.model.integrate(f"{APP_NAME}:db", "postgresql-k8s:database")
-        await ops_test.model.integrate(f"{APP_NAME}:visibility", "postgresql-k8s:database")
-        await ops_test.model.wait_for_idle(
-            # apps=["self-signed-certificates", "postgresql-k8s"],
-            apps=["postgresql-k8s"],
-            status="active",
-            raise_on_blocked=False,
-            timeout=300,
-        )
-        await ops_test.model.wait_for_idle(apps=[APP_NAME], status="blocked", raise_on_blocked=False, timeout=300)
+        # await ops_test.model.integrate(f"{APP_NAME}:db", "postgresql-k8s:database")
+        # await ops_test.model.integrate(f"{APP_NAME}:visibility", "postgresql-k8s:database")
+        # await ops_test.model.wait_for_idle(
+        #     # apps=["self-signed-certificates", "postgresql-k8s"],
+        #     apps=["postgresql-k8s"],
+        #     status="active",
+        #     raise_on_blocked=False,
+        #     timeout=300,
+        # )
+        # await ops_test.model.wait_for_idle(apps=[APP_NAME], status="blocked", raise_on_blocked=False, timeout=300)
 
         await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
