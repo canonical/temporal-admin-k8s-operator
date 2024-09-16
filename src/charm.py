@@ -116,6 +116,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
+        self._state.tls_enabled = event.relation.data[event.app].get("tls_enabled", False)
         self._state.database_connections = json.loads(database_connections) if database_connections else None
         self._setup_db_schemas(event)
 
@@ -168,6 +169,7 @@ class TemporalAdminK8SCharm(CharmBase):
         except Exception as err:
             event.fail(err)
 
+    # flake8: noqa: C901
     def _setup_db_schemas(self, event):
         """Initialize the db schemas if db connections info is available.
 
@@ -200,9 +202,7 @@ class TemporalAdminK8SCharm(CharmBase):
         for key, database_connection in self._state.database_connections.items():
             logger.info(f"initializing {key} schema")
             try:
-                execute(
-                    container,
-                    "temporal-sql-tool",
+                command_args = [
                     "--plugin",
                     "postgres",
                     "--endpoint",
@@ -218,10 +218,15 @@ class TemporalAdminK8SCharm(CharmBase):
                     "setup-schema",
                     "-v",
                     "0.0",
-                )
-                execute(
-                    container,
-                    "temporal-sql-tool",
+                ]
+
+                if self._state.tls_enabled:
+                    command_args.insert(2, "--tls")
+                    command_args.insert(3, "--tls-disable-host-verification")
+
+                execute(container, "temporal-sql-tool", *command_args)
+
+                command_args = [
                     "--plugin",
                     "postgres",
                     "--endpoint",
@@ -237,7 +242,14 @@ class TemporalAdminK8SCharm(CharmBase):
                     "update-schema",
                     "-d",
                     schema_dirs[key],
-                )
+                ]
+
+                # Conditionally add the TLS flags
+                if self._state.tls_enabled:
+                    command_args.insert(2, "--tls")
+                    command_args.insert(3, "--tls-disable-host-verification")
+
+                execute(container, "temporal-sql-tool", *command_args)
             except Exception as e:
                 logger.error(f"Error setting up schema: {e}")
                 raise Exception from e
