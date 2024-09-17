@@ -116,7 +116,6 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.tls_enabled = event.relation.data[event.app].get("tls_enabled", False)
         self._state.database_connections = json.loads(database_connections) if database_connections else None
         self._setup_db_schemas(event)
 
@@ -220,7 +219,7 @@ class TemporalAdminK8SCharm(CharmBase):
                     "0.0",
                 ]
 
-                if self._state.tls_enabled:
+                if database_connection.get("tls", False):
                     command_args.insert(2, "--tls")
                     command_args.insert(3, "--tls-disable-host-verification")
 
@@ -245,7 +244,7 @@ class TemporalAdminK8SCharm(CharmBase):
                 ]
 
                 # Conditionally add the TLS flags
-                if self._state.tls_enabled:
+                if database_connection.get("tls", False):
                     command_args.insert(2, "--tls")
                     command_args.insert(3, "--tls-disable-host-verification")
 
