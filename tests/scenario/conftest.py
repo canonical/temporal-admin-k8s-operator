@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright 2025 Canonical Ltd.
+# Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 import json
@@ -14,6 +13,9 @@ def pytest_configure(config):
     """Flags that can be configured to modify fixture behavior.
 
     Used to determine how _state in the peer relation app databag is populated.
+
+    Args:
+        config: the pytest config object
     """
     config.addinivalue_line("markers", "admin_relation_skipped")
     config.addinivalue_line("markers", "admin_relation_uninitialized")
