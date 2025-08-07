@@ -35,6 +35,7 @@ def admin_tools_latest(juju: jubilant.Juju):
 
     juju.deploy(
         charm="postgresql-k8s",
+        app="postgresql-k8s",
         channel="14/stable",
         trust=True,
         base="ubuntu@22.04",
@@ -42,6 +43,7 @@ def admin_tools_latest(juju: jubilant.Juju):
 
     juju.deploy(
         charm="temporal-k8s",
+        app="temporal-k8s",
         channel="1.23/edge",
         config={
             "num-history-shards": 1,
