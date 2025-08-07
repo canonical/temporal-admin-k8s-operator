@@ -71,7 +71,7 @@ class TemporalAdminK8SCharm(CharmBase):
         self.framework.observe(self.on.admin_relation_broken, self._on_admin_relation_broken)
 
         # Handle action
-        self.framework.observe(self.on.tctl_action, self._on_tctl_action)
+        self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
 
     @log_event_handler
@@ -135,8 +135,8 @@ class TemporalAdminK8SCharm(CharmBase):
         self._setup_db_schemas(event)
 
     @log_event_handler
-    def _on_tctl_action(self, event):
-        """Run the tctl command line tool.
+    def _on_cli_action(self, event):
+        """Run the temporal command line tool.
 
         Args:
             event: The event triggered when the action is triggered.
@@ -149,7 +149,7 @@ class TemporalAdminK8SCharm(CharmBase):
         server_name = self.model.config["server-name"] or "temporal-k8s"
         args = ["--address", f"{server_name}:7236", *event.params["args"].split()]
         try:
-            output = execute(container, "tctl", *args)
+            output = execute(container, "temporal", *args)
         except Exception as err:
             event.fail(f"command failed: {err}")
             return

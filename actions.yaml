@@ -1,13 +1,14 @@
 # Copyright 2023 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-tctl:
-  description: Run the tctl command.
+cli:
+  description: Run the temporal cli command.
   params:
     args:
       type: string
       description: The command line arguments.
-  required: [args]
+  required:
+  - args
 
 setup-schema:
   description: Set up the database schema.

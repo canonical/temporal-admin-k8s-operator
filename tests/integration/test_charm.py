@@ -17,8 +17,8 @@ from helpers import (
     APP_NAME,
     METADATA,
     SERVER_APP_NAME,
+    run_cli_action,
     run_setup_schema_action,
-    run_tctl_action,
 )
 from pytest_operator.plugin import OpsTest
 
@@ -33,7 +33,7 @@ async def deploy(ops_test: OpsTest):
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
-    await ops_test.model.deploy(SERVER_APP_NAME, channel="edge", config={"num-history-shards": 1})
+    await ops_test.model.deploy(SERVER_APP_NAME, channel="1.23/edge", config={"num-history-shards": 1})
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
     await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
 
@@ -59,9 +59,9 @@ async def deploy(ops_test: OpsTest):
 class TestDeployment:
     """Integration tests for Temporal admin charm."""
 
-    async def test_tctl_action(self, ops_test: OpsTest):
-        """Is it possible to run tctl command via the action."""
-        await run_tctl_action(ops_test, namespace="default")
+    async def test_cli_action(self, ops_test: OpsTest):
+        """Is it possible to run cli command via the action."""
+        await run_cli_action(ops_test, namespace="default")
 
     async def test_setup_schema_action(self, ops_test: OpsTest):
         """Is it possible to run setup schema via the action."""
@@ -128,7 +128,7 @@ class TestDeployment:
 
         assert ops_test.model.applications[APP_NAME].status == "active"
 
-        await run_tctl_action(ops_test, namespace="integrations")
+        await run_cli_action(ops_test, namespace="integrations")
 
     async def test_remove_server(self, ops_test: OpsTest):
         """Admin charm goes to blocked state once relation with the server charm is removed."""
