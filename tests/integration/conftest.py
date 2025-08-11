@@ -9,6 +9,9 @@ import jubilant
 import pytest
 import yaml
 
+POSTGRESQL_CHANNEL = "14/stable"
+TEMPORAL_CHANNEL = "1.23/edge"
+
 
 @pytest.fixture(scope="module")
 def juju(request: pytest.FixtureRequest):
@@ -24,9 +27,20 @@ def juju(request: pytest.FixtureRequest):
             print(log, end="")
 
 
-@pytest.fixture(scope="module")
-def admin_tools_latest(juju: jubilant.Juju):
-    """Deploy temporal-admin-k8s from the latest track."""
+def deploy_temporal_stack(
+    juju: jubilant.Juju,
+    postgresql_channel: str = POSTGRESQL_CHANNEL,
+    temporal_channel: str = TEMPORAL_CHANNEL,
+    temporal_admin_channel: str = TEMPORAL_CHANNEL,
+):
+    """Deploy temporal-admin-k8s from the latest track.
+
+    Args:
+        juju: Juju object (jubilant)
+        postgresql_channel: channel of postgresql-k8s charm
+        temporal_channel: channel of temporal-k8s charm
+        temporal_admin_channel: channel of temporal-admin-k8s charm
+    """
     juju.model_config(
         values={
             "update-status-hook-interval": "10s",
@@ -36,7 +50,7 @@ def admin_tools_latest(juju: jubilant.Juju):
     juju.deploy(
         charm="postgresql-k8s",
         app="postgresql-k8s",
-        channel="14/stable",
+        channel=postgresql_channel,
         trust=True,
         base="ubuntu@22.04",
     )
@@ -44,7 +58,7 @@ def admin_tools_latest(juju: jubilant.Juju):
     juju.deploy(
         charm="temporal-k8s",
         app="temporal-k8s",
-        channel="1.23/edge",
+        channel=temporal_channel,
         config={
             "num-history-shards": 1,
         },
@@ -54,15 +68,8 @@ def admin_tools_latest(juju: jubilant.Juju):
     juju.deploy(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
-        channel="latest/stable",
+        channel=temporal_admin_channel,
         base="ubuntu@22.04",
-    )
-
-    juju.wait(
-        lambda status: (
-            jubilant.all_active(status, "postgresql-k8s")
-            and jubilant.all_blocked(status, "temporal-k8s", "temporal-admin-k8s")
-        ),
     )
 
     juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
@@ -71,6 +78,12 @@ def admin_tools_latest(juju: jubilant.Juju):
     juju.integrate("temporal-k8s:admin", "temporal-admin-k8s:admin")
 
     juju.wait(jubilant.all_active)
+
+
+@pytest.fixture(scope="module")
+def admin_tools_latest_track(juju: jubilant.Juju):
+    """Deploy temporal-admin-k8s from the latest track."""
+    deploy_temporal_stack(juju, temporal_admin_channel="latest/stable")
 
     yield "temporal-admin-k8s"
 
