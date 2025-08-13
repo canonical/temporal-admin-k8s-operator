@@ -11,6 +11,10 @@ import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
 TEMPORAL_CHANNEL = "1.23/edge"
+TEMPORAL_LEGACY_CHANNEL = "latest/stable"
+
+METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
+UPSTREAM_IMAGE_SOURCE = METADATA["resources"]["temporal-admin-image"]["upstream-source"]
 
 
 @pytest.fixture(scope="module")
@@ -83,7 +87,7 @@ def deploy_temporal_stack(
 @pytest.fixture(scope="module")
 def admin_tools_latest_track(juju: jubilant.Juju):
     """Deploy temporal-admin-k8s from the latest track."""
-    deploy_temporal_stack(juju, temporal_admin_channel="latest/stable")
+    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_LEGACY_CHANNEL)
 
     yield "temporal-admin-k8s"
 
@@ -101,7 +105,6 @@ def charm_path() -> pathlib.Path:
 @pytest.fixture(scope="module")
 def charm_resources() -> dict:
     """Resources to deploy the admin-tools-k8s locally built charm."""
-    metadata = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
     return {
-        "temporal-admin-image": metadata["resources"]["temporal-admin-image"]["upstream-source"],
+        "temporal-admin-image": UPSTREAM_IMAGE_SOURCE,
     }
