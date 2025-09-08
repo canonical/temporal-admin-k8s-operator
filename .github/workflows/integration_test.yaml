@@ -14,3 +14,4 @@ jobs:
       use-canonical-k8s: true
       modules: '["test_charm.py", "test_refresh.py"]'
       juju-channel: 3.6/stable
+      pre-run-script: .github/scripts/k8s-pre.sh
