@@ -10,6 +10,7 @@ jobs:
     secrets: inherit
     with:
       provider: k8s
+      channel: "1.32-classic/stable"
       use-canonical-k8s: true
       modules: '["test_charm.py", "test_refresh.py"]'
       juju-channel: 3.6/stable
