@@ -8,8 +8,6 @@ jobs:
     secrets: inherit
     with:
       provider: k8s
-      extra-arguments: |
-        --kube-config=~/.kube/config
       use-canonical-k8s: true
       channel: edge
       charmcraft-channel: latest/edge
