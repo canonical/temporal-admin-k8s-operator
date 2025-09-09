@@ -4,11 +4,16 @@ on:
   workflow_call:
 jobs:
   integration-tests:
-    uses: arjun11-malik/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     secrets: inherit
     with:
-      provider: k8s
-      channel: "1.32-classic/stable"
+      extra-arguments: |
+        --kube-config=~/.kube/config
       use-canonical-k8s: true
+      self-hosted-runner: true
+      self-hosted-runner-label: large
+      self-hosted-runner-image: noble
+      channel: edge
+      charmcraft-channel: latest/edge
       modules: '["test_charm.py", "test_refresh.py"]'
       juju-channel: 3.6/stable
