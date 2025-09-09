@@ -7,6 +7,7 @@ jobs:
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     secrets: inherit
     with:
+      provider: k8s
       extra-arguments: |
         --kube-config=~/.kube/config
       use-canonical-k8s: true
