@@ -1,4 +1,5 @@
 name: Integration tests
+
 on:
   pull_request:
   workflow_call:
