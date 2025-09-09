@@ -2,7 +2,6 @@ name: Integration tests
 on:
   pull_request:
   workflow_call:
-
 jobs:
   integration-tests:
     uses: arjun11-malik/operator-workflows/.github/workflows/integration_test.yaml@main
