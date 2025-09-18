@@ -13,5 +13,4 @@ jobs:
       charmcraft-channel: latest/edge
       modules: '["test_charm.py", "test_refresh.py"]'
       juju-channel: 3.6/stable
-      tmate-debug: true
-      tmate-timeout: 60
+
