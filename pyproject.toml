@@ -60,6 +60,7 @@ dev = [
     "temporal-admin-k8s-operator[charm,unit,integration,lint,fmt]",
 ]
 
+
 [tool.bandit]
 exclude_dirs = ["/venv/"]
 
