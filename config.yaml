@@ -8,6 +8,6 @@ options:
     type: string
   server-name:
     description: |
-        The name with which the Temporal server frontend service is deployed.
+        [DEPRECATED] The name with which the Temporal server frontend service is deployed.
     default: "temporal-k8s"
     type: string

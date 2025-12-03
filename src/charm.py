@@ -10,6 +10,8 @@ import functools
 import json
 import logging
 
+from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
+
 from ops import main
 from ops.charm import CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
@@ -73,6 +75,9 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
+
+        # Handle temporal-host-info relation.
+        self.host_info = TemporalHostInfoRequirer(self)
 
     @log_event_handler
     def _on_install(self, event):
@@ -146,7 +151,7 @@ class TemporalAdminK8SCharm(CharmBase):
             event.fail("cannot connect to container")
             return
 
-        server_name = self.model.config["server-name"] or "temporal-k8s"
+        server_name = self.host_info.host or "temporal-k8s"
         args = ["--address", f"{server_name}:7236", *event.params["args"].split()]
         try:
             output = execute(container, "temporal", *args)
