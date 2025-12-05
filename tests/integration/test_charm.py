@@ -63,7 +63,6 @@ class TestDeployment:
         """Is it possible to run cli command via the action."""
         await run_cli_action(ops_test, namespace="default")
 
-
     async def test_host_info_relation(self, ops_test: OpsTest):
         """Add temporal-host-info relation and verify cli action works."""
         await ops_test.model.integrate("temporal-k8s:temporal-host-info", f"{APP_NAME}:temporal-host-info")
