@@ -65,7 +65,7 @@ class TestDeployment:
 
     async def test_host_info_relation(self, ops_test: OpsTest):
         """Add temporal-host-info relation and verify cli action works."""
-        await ops_test.model.integrate("temporal-k8s:temporal-host-info", f"{APP_NAME}:temporal-host-info")
+        await ops_test.model.integrate(f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info")
         await ops_test.model.wait_for_idle(
             apps=[APP_NAME],
             status="active",
