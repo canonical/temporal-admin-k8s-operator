@@ -63,6 +63,18 @@ class TestDeployment:
         """Is it possible to run cli command via the action."""
         await run_cli_action(ops_test, namespace="default")
 
+
+    async def test_host_info_relation(self, ops_test: OpsTest):
+        """Add temporal-host-info relation and verify cli action works."""
+        await ops_test.model.integrate("temporal-k8s:temporal-host-info", f"{APP_NAME}:temporal-host-info")
+        await ops_test.model.wait_for_idle(
+            apps=[APP_NAME],
+            status="active",
+            raise_on_blocked=False,
+            timeout=600,
+        )
+        await run_cli_action(ops_test, namespace="host-info")
+
     async def test_setup_schema_action(self, ops_test: OpsTest):
         """Is it possible to run setup schema via the action."""
         await run_setup_schema_action(ops_test)
