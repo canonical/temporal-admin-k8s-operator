@@ -4,6 +4,11 @@ variable "app_name" {
   default     = "temporal-admin-k8s"
 }
 
+variable "model" {
+  description = "Reference to an existing model resource or data source for the model to deploy to."
+  type        = string
+}
+
 variable "units" {
   type        = number
   description = "Number of units to deploy with this name and configuration"
