@@ -4,15 +4,15 @@ variable "app_name" {
   default     = "temporal-admin-k8s"
 }
 
-variable "model" {
-  description = "Reference to an existing model resource or data source for the model to deploy to."
-  type        = string
-}
-
 variable "units" {
   type        = number
   description = "Number of units to deploy with this name and configuration"
   default     = 1
+}
+
+variable "model_uuid" {
+  type = string
+  description = "UUID of the Juju model where the application is to be deployed"
 }
 
 variable "revision" {
