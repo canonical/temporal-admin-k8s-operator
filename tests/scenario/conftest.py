@@ -42,14 +42,14 @@ def database_connection_data():
         "db": {
             "dbname": "temporal-k8s_db",
             "host": "myhost",
-            "password": "inner-light",
+            "password": "inner-light",  # nosec B105
             "port": "4247",
             "user": "jean-luc@db",
         },
         "visibility": {
             "dbname": "temporal-k8s_visibility",
             "host": "myhost",
-            "password": "inner-light",
+            "password": "inner-light",  # nosec B105
             "port": "4247",
             "user": "jean-luc@visibility",
         },
