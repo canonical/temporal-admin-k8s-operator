@@ -11,7 +11,6 @@ import json
 import logging
 
 from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
-
 from ops import main
 from ops.charm import CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
@@ -152,12 +151,12 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         server_name = self.host_info.host or "temporal-k8s"
+        server_port = self.host_info.port or 7236
         if self.config["server-name"] != "temporal-k8s":
-            logger.warning(
-                "The 'server-name' config option is deprecated and will be removed in a future release."
-            )
+            logger.warning("The 'server-name' config option is deprecated and will be removed in a future release.")
             server_name = self.config["server-name"]
-        args = ["--address", f"{server_name}:7236", *event.params["args"].split()]
+            server_port = 7236
+        args = ["--address", f"{server_name}:{server_port}", *event.params["args"].split()]
         try:
             output = execute(container, "temporal", *args)
         except Exception as err:

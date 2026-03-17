@@ -38,6 +38,7 @@ provides:
 requires:
   temporal-host-info:
     interface: temporal-host-info
+    limit: 1
 
 containers:
   temporal-admin:
