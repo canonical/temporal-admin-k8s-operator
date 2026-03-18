@@ -74,6 +74,21 @@ class TestDeployment:
         )
         await run_cli_action(ops_test, namespace="host-info")
 
+    async def test_host_info_relation_removed_uses_fallback(self, ops_test: OpsTest):
+        """Remove temporal-host-info relation and verify cli action still works."""
+        await ops_test.juju(
+            "remove-relation",
+            f"{SERVER_APP_NAME}:temporal-host-info",
+            f"{APP_NAME}:temporal-host-info",
+        )
+        await ops_test.model.wait_for_idle(
+            apps=[APP_NAME],
+            status="active",
+            raise_on_blocked=False,
+            timeout=600,
+        )
+        await run_cli_action(ops_test, namespace="host-info-fallback")
+
     async def test_setup_schema_action(self, ops_test: OpsTest):
         """Is it possible to run setup schema via the action."""
         await run_setup_schema_action(ops_test)
