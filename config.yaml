@@ -8,6 +8,9 @@ options:
     type: string
   server-name:
     description: |
-        [DEPRECATED] The name with which the Temporal server frontend service is deployed.
-    default: "temporal-k8s"
+        [DEPRECATED] Optional fallback Temporal server frontend service name when
+        `temporal-host-info` relation is unavailable.
+        Leave empty to require `temporal-host-info` only. If set, this option is
+        deprecated and will be removed in a future release; prefer the relation.
+    default: ""
     type: string
