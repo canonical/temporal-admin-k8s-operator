@@ -48,6 +48,9 @@ async def deploy(ops_test: OpsTest):
         await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
+        await ops_test.model.integrate(
+            f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info"
+        )
 
         await ops_test.model.wait_for_idle(apps=[SERVER_APP_NAME], status="active", raise_on_blocked=False, timeout=600)
 
