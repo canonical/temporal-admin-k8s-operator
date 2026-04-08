@@ -164,18 +164,16 @@ class TemporalAdminK8SCharm(CharmBase):
         if self.host_info.host and self.host_info.port:
             server_name = self.host_info.host
             server_port = self.host_info.port
+        elif deprecated := self._deprecated_server_name:
+            logger.warning(
+                "The `server-name` config option is deprecated and will be removed in a future release; "
+                "prefer the `temporal-host-info` relation."
+            )
+            server_name = deprecated
+            server_port = 7236
         else:
-            deprecated = self._deprecated_server_name
-            if deprecated:
-                logger.warning(
-                    "The `server-name` config option is deprecated and will be removed in a future release; "
-                    "prefer the `temporal-host-info` relation."
-                )
-                server_name = deprecated
-                server_port = 7236
-            else:
-                event.fail("temporal-host-info relation not established; set deprecated server-name config as fallback")
-                return
+            event.fail("temporal-host-info relation not established; set deprecated server-name config as fallback")
+            return
         args = ["--address", f"{server_name}:{server_port}", *event.params["args"].split()]
         try:
             output = execute(container, "temporal", *args)

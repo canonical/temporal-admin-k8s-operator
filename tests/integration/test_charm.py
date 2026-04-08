@@ -53,9 +53,7 @@ async def deploy(ops_test: OpsTest):
         await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
         try:
-            await ops_test.model.integrate(
-                f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info"
-            )
+            await ops_test.model.integrate(f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info")
         except JujuAPIError as exc:
             # Older temporal-k8s revisions may not expose temporal-host-info yet.
             if "temporal-host-info" in str(exc) and "has no" in str(exc):
