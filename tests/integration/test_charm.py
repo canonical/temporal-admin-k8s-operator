@@ -13,6 +13,7 @@ import time
 
 import pytest
 import pytest_asyncio
+from pytest import FixtureRequest
 from helpers import (
     APP_NAME,
     METADATA,
@@ -26,10 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 @pytest_asyncio.fixture(name="deploy", scope="module")
-async def deploy(ops_test: OpsTest):
+async def deploy(ops_test: OpsTest, request: FixtureRequest):
     """The app is up and running."""
     await ops_test.model.set_config({"update-status-hook-interval": "1m"})
-    charm = await ops_test.build_charm(".")
+    charm_paths = request.config.getoption("--charm-file")
+    if charm_paths:
+        charm = charm_paths[0]
+    else:
+        charm = await ops_test.build_charm(".")
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
