@@ -19,9 +19,18 @@ def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_tra
         resources=charm_resources,
     )
 
-    juju.integrate(
-        f"{TEMPORAL_SERVER_APP_NAME}:temporal-host-info",
-        f"{admin_tools_latest_track}:temporal-host-info",
-    )
+    try:
+        juju.integrate(
+            f"{TEMPORAL_SERVER_APP_NAME}:temporal-host-info",
+            f"{admin_tools_latest_track}:temporal-host-info",
+        )
+    except jubilant.CLIError as exc:
+        # During upgrade testing, temporal-k8s may still be on a legacy revision
+        # that does not expose temporal-host-info. In that case, use deprecated
+        # server-name as a compatibility fallback.
+        if "temporal-host-info" in str(exc) and "has no relation" in str(exc):
+            juju.cli("config", admin_tools_latest_track, f"server-name={TEMPORAL_SERVER_APP_NAME}")
+        else:
+            raise
 
     juju.wait(jubilant.all_active, error=jubilant.any_error)
