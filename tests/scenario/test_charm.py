@@ -65,3 +65,18 @@ def test_ready(context, state, temporal_admin_container):
         assert state_out.get_container("temporal-admin").plan.to_dict() == {}
 
         assert execute.call_count == 4
+
+
+def test_transient_schema_setup_error_waits_for_retry(context, state, temporal_admin_container):
+    with unittest.mock.patch("charm.execute") as execute:
+        execute.side_effect = ops.pebble.ExecError(
+            command=["temporal-sql-tool", "setup-schema"],
+            exit_code=1,
+            stdout="",
+            stderr="Unable to connect to SQL database",
+        )
+        state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+        assert state_out.unit_status == ops.WaitingStatus(
+            "database temporarily unavailable; retrying schema setup"
+        )

@@ -10,7 +10,7 @@ import functools
 import json
 import logging
 
-from ops import main
+from ops import main, pebble
 from ops.charm import CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 
@@ -19,6 +19,7 @@ from state import State
 logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.23.1"
 REQUIRED_DATABASE_CONNECTION_FIELDS = ("host", "port", "dbname", "user", "password")
+TRANSIENT_SCHEMA_SETUP_STATUS = "database temporarily unavailable; retrying schema setup"
 
 
 def log_event_handler(method):
@@ -281,6 +282,10 @@ class TemporalAdminK8SCharm(CharmBase):
                 execute(container, "temporal-sql-tool", *command_args)
             except Exception as e:
                 logger.error(f"Error setting up schema: {e}")
+                if isinstance(e, (pebble.ExecError, pebble.ChangeError)) and hasattr(event, "defer"):
+                    self.unit.status = WaitingStatus(TRANSIENT_SCHEMA_SETUP_STATUS)
+                    event.defer()
+                    return
                 raise Exception from e
 
         admin_relations = self.model.relations["admin"]
@@ -315,7 +320,6 @@ class TemporalAdminK8SCharm(CharmBase):
                 return f"{connection_name}: missing {missing_list}"
 
         return ""
-
 
 def execute(container, command, *args):
     """Execute the given command in the given container.
