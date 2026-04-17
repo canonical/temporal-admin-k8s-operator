@@ -63,11 +63,7 @@ def peer_relation(request, database_connection_data):
     if request.node.get_closest_marker("admin_relation_incomplete"):
         incomplete_data = {
             **database_connection_data,
-            "db": {
-                key: value
-                for key, value in database_connection_data["db"].items()
-                if key != "password"
-            },
+            "db": {key: value for key, value in database_connection_data["db"].items() if key != "password"},
         }
         state_data["database_connections"] = json.dumps(incomplete_data)
         return ops.testing.PeerRelation("peer", local_app_data=state_data)
@@ -85,11 +81,7 @@ def admin_relation(request, database_connection_data):
     if request.node.get_closest_marker("admin_relation_incomplete"):
         incomplete_data = {
             **database_connection_data,
-            "db": {
-                key: value
-                for key, value in database_connection_data["db"].items()
-                if key != "password"
-            },
+            "db": {key: value for key, value in database_connection_data["db"].items() if key != "password"},
         }
         remote_app_data = {"database_connections": json.dumps(incomplete_data)}
         return ops.testing.Relation("admin", remote_app_data=remote_app_data)

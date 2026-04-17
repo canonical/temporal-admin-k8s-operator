@@ -120,17 +120,13 @@ class TemporalAdminK8SCharm(CharmBase):
         database_connections = event.relation.data[event.app].get("database_connections")
         if not database_connections:
             self._state.database_connections = None
-            self.unit.status = BlockedStatus(
-                "admin:temporal relation: database connections info not available"
-            )
+            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
         try:
             loaded_connections = json.loads(database_connections)
         except json.JSONDecodeError:
-            self.unit.status = BlockedStatus(
-                "admin:temporal relation: invalid database connections data"
-            )
+            self.unit.status = BlockedStatus("admin:temporal relation: invalid database connections data")
             return
 
         missing_fields = self._find_missing_database_connection_fields(loaded_connections)
@@ -192,6 +188,33 @@ class TemporalAdminK8SCharm(CharmBase):
         except Exception as err:
             event.fail(err)
 
+    def _ensure_schema_setup_prerequisites(self, event) -> bool:
+        """Return True when schema setup should run; otherwise set status/defer and return False."""
+        if not self.model.unit.is_leader():
+            return False
+
+        if not self._state.is_ready():
+            event.defer()
+            return False
+
+        container = self.unit.get_container(self.name)
+        if not container.can_connect():
+            event.defer()
+            return False
+
+        if not self._state.database_connections:
+            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
+            return False
+
+        missing_fields = self._find_missing_database_connection_fields(self._state.database_connections)
+        if missing_fields:
+            self.unit.status = WaitingStatus(
+                f"admin:temporal relation: incomplete database connections data ({missing_fields})"
+            )
+            return False
+
+        return True
+
     # flake8: noqa: C901
     def _setup_db_schemas(self, event):
         """Initialize the db schemas if db connections info is available.
@@ -202,29 +225,10 @@ class TemporalAdminK8SCharm(CharmBase):
         Raises:
             Exception: if the schemas were not set up successfully.
         """
-        if not self.model.unit.is_leader():
-            return
-
-        if not self._state.is_ready():
-            event.defer()
+        if not self._ensure_schema_setup_prerequisites(event):
             return
 
         container = self.unit.get_container(self.name)
-        if not container.can_connect():
-            event.defer()
-            return
-
-        if not self._state.database_connections:
-            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
-            return
-
-        missing_fields = self._find_missing_database_connection_fields(self._state.database_connections)
-        if missing_fields:
-            self.unit.status = WaitingStatus(
-                f"admin:temporal relation: incomplete database connections data ({missing_fields})"
-            )
-            return
-
         schema_dirs = {
             "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
             "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
@@ -320,6 +324,7 @@ class TemporalAdminK8SCharm(CharmBase):
                 return f"{connection_name}: missing {missing_list}"
 
         return ""
+
 
 def execute(container, command, *args):
     """Execute the given command in the given container.

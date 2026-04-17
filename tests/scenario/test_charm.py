@@ -77,6 +77,4 @@ def test_transient_schema_setup_error_waits_for_retry(context, state, temporal_a
         )
         state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-        assert state_out.unit_status == ops.WaitingStatus(
-            "database temporarily unavailable; retrying schema setup"
-        )
+        assert state_out.unit_status == ops.WaitingStatus("database temporarily unavailable; retrying schema setup")
