@@ -18,6 +18,7 @@ from state import State
 
 logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.23.1"
+REQUIRED_DATABASE_CONNECTION_FIELDS = ("host", "port", "dbname", "user", "password")
 
 
 def log_event_handler(method):
@@ -116,7 +117,29 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = json.loads(database_connections) if database_connections else None
+        if not database_connections:
+            self._state.database_connections = None
+            self.unit.status = BlockedStatus(
+                "admin:temporal relation: database connections info not available"
+            )
+            return
+
+        try:
+            loaded_connections = json.loads(database_connections)
+        except json.JSONDecodeError:
+            self.unit.status = BlockedStatus(
+                "admin:temporal relation: invalid database connections data"
+            )
+            return
+
+        missing_fields = self._find_missing_database_connection_fields(loaded_connections)
+        if missing_fields:
+            self.unit.status = WaitingStatus(
+                f"admin:temporal relation: incomplete database connections data ({missing_fields})"
+            )
+            return
+
+        self._state.database_connections = loaded_connections
         self._setup_db_schemas(event)
 
     @log_event_handler
@@ -194,6 +217,13 @@ class TemporalAdminK8SCharm(CharmBase):
             self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
+        missing_fields = self._find_missing_database_connection_fields(self._state.database_connections)
+        if missing_fields:
+            self.unit.status = WaitingStatus(
+                f"admin:temporal relation: incomplete database connections data ({missing_fields})"
+            )
+            return
+
         schema_dirs = {
             "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
             "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
@@ -268,6 +298,23 @@ class TemporalAdminK8SCharm(CharmBase):
         self._state.is_initial_schema_ready = True
         self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
+
+    def _find_missing_database_connection_fields(self, database_connections):
+        """Return missing required relation fields, if any."""
+        if not isinstance(database_connections, dict):
+            return "database_connections must be a mapping"
+
+        for connection_name in ("db", "visibility"):
+            connection = database_connections.get(connection_name)
+            if not isinstance(connection, dict):
+                return f"{connection_name}: missing connection details"
+
+            missing = [field for field in REQUIRED_DATABASE_CONNECTION_FIELDS if not connection.get(field)]
+            if missing:
+                missing_list = ", ".join(missing)
+                return f"{connection_name}: missing {missing_list}"
+
+        return ""
 
 
 def execute(container, command, *args):

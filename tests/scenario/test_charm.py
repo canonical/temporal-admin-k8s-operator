@@ -48,6 +48,15 @@ def test_missing_admin_relation_data(context, state, temporal_admin_container):
     )
 
 
+@pytest.mark.admin_relation_incomplete
+def test_incomplete_admin_relation_data(context, state, temporal_admin_container):
+    state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    assert state_out.unit_status == ops.WaitingStatus(
+        "admin:temporal relation: incomplete database connections data (db: missing password)"
+    )
+
+
 def test_ready(context, state, temporal_admin_container):
     with unittest.mock.patch("charm.execute") as execute:
         state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
