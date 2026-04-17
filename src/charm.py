@@ -116,7 +116,15 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = json.loads(database_connections) if database_connections else None
+        if not database_connections:
+            self._state.database_connections = None
+            self.unit.status = WaitingStatus(
+                "admin:temporal relation: waiting for database connection info"
+            )
+            event.defer()
+            return
+
+        self._state.database_connections = json.loads(database_connections)
         self._setup_db_schemas(event)
 
     @log_event_handler
