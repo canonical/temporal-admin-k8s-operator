@@ -8,6 +8,8 @@ import ops
 import ops.testing
 import pytest
 
+from charm import WAITING_DB_RELATION_INFO
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,18 +36,14 @@ def state(temporal_admin_container, all_required_relations):
 def test_missing_admin_relation(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
-    )
+    assert state_out.unit_status == ops.WaitingStatus(WAITING_DB_RELATION_INFO)
 
 
 @pytest.mark.admin_relation_uninitialized
 def test_missing_admin_relation_data(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
-    )
+    assert state_out.unit_status == ops.WaitingStatus(WAITING_DB_RELATION_INFO)
 
 
 @pytest.mark.admin_relation_incomplete

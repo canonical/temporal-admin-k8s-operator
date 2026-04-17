@@ -11,7 +11,7 @@ import json
 import logging
 
 from ops import main, pebble
-from ops.charm import CharmBase
+from ops.charm import ActionEvent, CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 
 from state import State
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.23.1"
 REQUIRED_DATABASE_CONNECTION_FIELDS = ("host", "port", "dbname", "user", "password")
 TRANSIENT_SCHEMA_SETUP_STATUS = "database temporarily unavailable; retrying schema setup"
+WAITING_DB_RELATION_INFO = "admin:temporal relation: waiting for database connection info"
 
 
 def log_event_handler(method):
@@ -120,7 +121,8 @@ class TemporalAdminK8SCharm(CharmBase):
         database_connections = event.relation.data[event.app].get("database_connections")
         if not database_connections:
             self._state.database_connections = None
-            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
+            self.unit.status = WaitingStatus(WAITING_DB_RELATION_INFO)
+            event.defer()
             return
 
         try:
@@ -134,6 +136,7 @@ class TemporalAdminK8SCharm(CharmBase):
             self.unit.status = WaitingStatus(
                 f"admin:temporal relation: incomplete database connections data ({missing_fields})"
             )
+            event.defer()
             return
 
         self._state.database_connections = loaded_connections
@@ -203,7 +206,9 @@ class TemporalAdminK8SCharm(CharmBase):
             return False
 
         if not self._state.database_connections:
-            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
+            self.unit.status = WaitingStatus(WAITING_DB_RELATION_INFO)
+            if not isinstance(event, ActionEvent):
+                event.defer()
             return False
 
         missing_fields = self._find_missing_database_connection_fields(self._state.database_connections)
@@ -211,6 +216,8 @@ class TemporalAdminK8SCharm(CharmBase):
             self.unit.status = WaitingStatus(
                 f"admin:temporal relation: incomplete database connections data ({missing_fields})"
             )
+            if not isinstance(event, ActionEvent):
+                event.defer()
             return False
 
         return True
