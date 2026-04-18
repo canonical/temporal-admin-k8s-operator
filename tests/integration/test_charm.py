@@ -39,8 +39,9 @@ async def deploy(ops_test: OpsTest):
 
     async with ops_test.fast_forward():
         await ops_test.model.wait_for_idle(
-            apps=[SERVER_APP_NAME, APP_NAME], status="blocked", raise_on_blocked=False, timeout=600
+            apps=[SERVER_APP_NAME], status="blocked", raise_on_blocked=False, timeout=600
         )
+        await ops_test.model.wait_for_idle(apps=[APP_NAME], raise_on_blocked=False, timeout=600)
         await ops_test.model.wait_for_idle(
             apps=["postgresql-k8s"], status="active", raise_on_blocked=False, timeout=600
         )
