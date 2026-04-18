@@ -132,15 +132,12 @@ class TestDeployment:
         await run_cli_action(ops_test, namespace="integrations")
 
     async def test_remove_server(self, ops_test: OpsTest):
-        """Admin charm goes to blocked state once relation with the server charm is removed."""
+        """Admin charm enters waiting once the server app is removed (no database connection info)."""
         await ops_test.model.applications[SERVER_APP_NAME].destroy()
         await ops_test.model.block_until(lambda: SERVER_APP_NAME not in ops_test.model.applications)
 
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME],
-            status="blocked",
-            raise_on_blocked=False,
-            timeout=300,
-        )
+        await ops_test.model.wait_for_idle(apps=[APP_NAME], raise_on_blocked=False, timeout=300)
 
-        assert ops_test.model.applications[APP_NAME].units[0].workload_status == "blocked"
+        unit = ops_test.model.applications[APP_NAME].units[0]
+        assert unit.workload_status == "waiting"
+        assert "database connection info" in (unit.workload_status_message or "")
