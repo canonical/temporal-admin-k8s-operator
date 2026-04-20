@@ -10,14 +10,17 @@ import functools
 import json
 import logging
 
-from ops import main
-from ops.charm import CharmBase
+from ops import main, pebble
+from ops.charm import ActionEvent, CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 
 from state import State
 
 logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.23.1"
+REQUIRED_DATABASE_CONNECTION_FIELDS = ("host", "port", "dbname", "user", "password")
+TRANSIENT_SCHEMA_SETUP_STATUS = "database temporarily unavailable; retrying schema setup"
+WAITING_DB_RELATION_INFO = "admin:temporal relation: waiting for database connection info"
 
 
 def log_event_handler(method):
@@ -116,7 +119,27 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = json.loads(database_connections) if database_connections else None
+        if not database_connections:
+            self._state.database_connections = None
+            self.unit.status = WaitingStatus(WAITING_DB_RELATION_INFO)
+            event.defer()
+            return
+
+        try:
+            loaded_connections = json.loads(database_connections)
+        except json.JSONDecodeError:
+            self.unit.status = BlockedStatus("admin:temporal relation: invalid database connections data")
+            return
+
+        missing_fields = self._find_missing_database_connection_fields(loaded_connections)
+        if missing_fields:
+            self.unit.status = WaitingStatus(
+                f"admin:temporal relation: incomplete database connections data ({missing_fields})"
+            )
+            event.defer()
+            return
+
+        self._state.database_connections = loaded_connections
         self._setup_db_schemas(event)
 
     @log_event_handler
@@ -168,6 +191,37 @@ class TemporalAdminK8SCharm(CharmBase):
         except Exception as err:
             event.fail(err)
 
+    def _ensure_schema_setup_prerequisites(self, event) -> bool:
+        """Return True when schema setup should run; otherwise set status/defer and return False."""
+        if not self.model.unit.is_leader():
+            return False
+
+        if not self._state.is_ready():
+            event.defer()
+            return False
+
+        container = self.unit.get_container(self.name)
+        if not container.can_connect():
+            event.defer()
+            return False
+
+        if not self._state.database_connections:
+            self.unit.status = WaitingStatus(WAITING_DB_RELATION_INFO)
+            if not isinstance(event, ActionEvent):
+                event.defer()
+            return False
+
+        missing_fields = self._find_missing_database_connection_fields(self._state.database_connections)
+        if missing_fields:
+            self.unit.status = WaitingStatus(
+                f"admin:temporal relation: incomplete database connections data ({missing_fields})"
+            )
+            if not isinstance(event, ActionEvent):
+                event.defer()
+            return False
+
+        return True
+
     # flake8: noqa: C901
     def _setup_db_schemas(self, event):
         """Initialize the db schemas if db connections info is available.
@@ -178,22 +232,10 @@ class TemporalAdminK8SCharm(CharmBase):
         Raises:
             Exception: if the schemas were not set up successfully.
         """
-        if not self.model.unit.is_leader():
-            return
-
-        if not self._state.is_ready():
-            event.defer()
+        if not self._ensure_schema_setup_prerequisites(event):
             return
 
         container = self.unit.get_container(self.name)
-        if not container.can_connect():
-            event.defer()
-            return
-
-        if not self._state.database_connections:
-            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
-            return
-
         schema_dirs = {
             "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
             "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
@@ -251,6 +293,10 @@ class TemporalAdminK8SCharm(CharmBase):
                 execute(container, "temporal-sql-tool", *command_args)
             except Exception as e:
                 logger.error(f"Error setting up schema: {e}")
+                if isinstance(e, (pebble.ExecError, pebble.ChangeError)) and hasattr(event, "defer"):
+                    self.unit.status = WaitingStatus(TRANSIENT_SCHEMA_SETUP_STATUS)
+                    event.defer()
+                    return
                 raise Exception from e
 
         admin_relations = self.model.relations["admin"]
@@ -268,6 +314,23 @@ class TemporalAdminK8SCharm(CharmBase):
         self._state.is_initial_schema_ready = True
         self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
+
+    def _find_missing_database_connection_fields(self, database_connections):
+        """Return missing required relation fields, if any."""
+        if not isinstance(database_connections, dict):
+            return "database_connections must be a mapping"
+
+        for connection_name in ("db", "visibility"):
+            connection = database_connections.get(connection_name)
+            if not isinstance(connection, dict):
+                return f"{connection_name}: missing connection details"
+
+            missing = [field for field in REQUIRED_DATABASE_CONNECTION_FIELDS if not connection.get(field)]
+            if missing:
+                missing_list = ", ".join(missing)
+                return f"{connection_name}: missing {missing_list}"
+
+        return ""
 
 
 def execute(container, command, *args):

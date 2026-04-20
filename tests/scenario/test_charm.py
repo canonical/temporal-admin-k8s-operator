@@ -8,6 +8,8 @@ import ops
 import ops.testing
 import pytest
 
+from charm import WAITING_DB_RELATION_INFO
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,17 +36,22 @@ def state(temporal_admin_container, all_required_relations):
 def test_missing_admin_relation(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
-    )
+    assert state_out.unit_status == ops.WaitingStatus(WAITING_DB_RELATION_INFO)
 
 
 @pytest.mark.admin_relation_uninitialized
 def test_missing_admin_relation_data(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
+    assert state_out.unit_status == ops.WaitingStatus(WAITING_DB_RELATION_INFO)
+
+
+@pytest.mark.admin_relation_incomplete
+def test_incomplete_admin_relation_data(context, state, temporal_admin_container):
+    state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    assert state_out.unit_status == ops.WaitingStatus(
+        "admin:temporal relation: incomplete database connections data (db: missing password)"
     )
 
 
@@ -56,3 +63,16 @@ def test_ready(context, state, temporal_admin_container):
         assert state_out.get_container("temporal-admin").plan.to_dict() == {}
 
         assert execute.call_count == 4
+
+
+def test_transient_schema_setup_error_waits_for_retry(context, state, temporal_admin_container):
+    with unittest.mock.patch("charm.execute") as execute:
+        execute.side_effect = ops.pebble.ExecError(
+            command=["temporal-sql-tool", "setup-schema"],
+            exit_code=1,
+            stdout="",
+            stderr="Unable to connect to SQL database",
+        )
+        state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+        assert state_out.unit_status == ops.WaitingStatus("database temporarily unavailable; retrying schema setup")
