@@ -3,11 +3,8 @@
 
 """Test to ensure successful refreshes from latest track to the 1.23 track."""
 
-import logging
-
 import jubilant
-
-logger = logging.getLogger(__name__)
+from conftest import TEMPORAL_SERVER_APP_NAME
 
 
 def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_track, charm_path, charm_resources):
@@ -17,4 +14,10 @@ def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_tra
         path=charm_path,
         resources=charm_resources,
     )
+
+    juju.integrate(
+        f"{TEMPORAL_SERVER_APP_NAME}:temporal-host-info",
+        f"{admin_tools_latest_track}:temporal-host-info",
+    )
+
     juju.wait(jubilant.all_active, error=jubilant.any_error)

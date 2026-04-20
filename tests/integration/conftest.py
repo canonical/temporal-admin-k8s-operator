@@ -12,6 +12,7 @@ import yaml
 POSTGRESQL_CHANNEL = "14/stable"
 TEMPORAL_CHANNEL = "1.23/edge"
 TEMPORAL_LEGACY_CHANNEL = "latest/stable"
+TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
 UPSTREAM_IMAGE_SOURCE = METADATA["resources"]["temporal-admin-image"]["upstream-source"]
@@ -66,7 +67,7 @@ def deploy_temporal_stack(
         config={
             "num-history-shards": 1,
         },
-        base="ubuntu@22.04",
+        base="ubuntu@24.04",
     )
 
     juju.deploy(

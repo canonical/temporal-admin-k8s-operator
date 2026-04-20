@@ -20,16 +20,21 @@ from helpers import (
     run_cli_action,
     run_setup_schema_action,
 )
+from pytest import FixtureRequest
 from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
 
 
 @pytest_asyncio.fixture(name="deploy", scope="module")
-async def deploy(ops_test: OpsTest):
+async def deploy(ops_test: OpsTest, request: FixtureRequest):
     """The app is up and running."""
     await ops_test.model.set_config({"update-status-hook-interval": "1m"})
-    charm = await ops_test.build_charm(".")
+    charm_paths = request.config.getoption("--charm-file")
+    if charm_paths:
+        charm = charm_paths[0]
+    else:
+        charm = await ops_test.build_charm(".")
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
@@ -48,6 +53,7 @@ async def deploy(ops_test: OpsTest):
         await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
         await ops_test.model.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
+        await ops_test.model.integrate(f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info")
 
         await ops_test.model.wait_for_idle(apps=[SERVER_APP_NAME], status="active", raise_on_blocked=False, timeout=600)
 
@@ -62,6 +68,33 @@ class TestDeployment:
     async def test_cli_action(self, ops_test: OpsTest):
         """Is it possible to run cli command via the action."""
         await run_cli_action(ops_test, namespace="default")
+
+    async def test_host_info_relation(self, ops_test: OpsTest):
+        """Relation values should take precedence over deprecated config fallback."""
+        await ops_test.model.applications[APP_NAME].set_config({"server-name": "deprecated-host"})
+        await ops_test.model.wait_for_idle(
+            apps=[APP_NAME],
+            status="active",
+            raise_on_blocked=False,
+            timeout=600,
+        )
+        await run_cli_action(ops_test, namespace="host-info")
+
+    async def test_host_info_relation_removed_uses_fallback(self, ops_test: OpsTest):
+        """Remove host-info relation and verify deprecated config fallback still works."""
+        await ops_test.model.applications[APP_NAME].set_config({"server-name": SERVER_APP_NAME})
+        await ops_test.juju(
+            "remove-relation",
+            f"{SERVER_APP_NAME}:temporal-host-info",
+            f"{APP_NAME}:temporal-host-info",
+        )
+        await ops_test.model.wait_for_idle(
+            apps=[APP_NAME],
+            status="active",
+            raise_on_blocked=False,
+            timeout=600,
+        )
+        await run_cli_action(ops_test, namespace="host-info-fallback")
 
     async def test_setup_schema_action(self, ops_test: OpsTest):
         """Is it possible to run setup schema via the action."""
