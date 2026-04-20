@@ -132,7 +132,7 @@ class TestDeployment:
         await run_cli_action(ops_test, namespace="integrations")
 
     async def test_remove_server(self, ops_test: OpsTest):
-        """Admin charm enters waiting once the server app is removed (no database connection info)."""
+        """After server removal, admin waits: no database connection info on the relation."""
         await ops_test.model.applications[SERVER_APP_NAME].destroy()
         await ops_test.model.block_until(lambda: SERVER_APP_NAME not in ops_test.model.applications)
 
