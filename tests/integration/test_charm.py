@@ -13,7 +13,6 @@ import time
 
 import pytest
 import pytest_asyncio
-from pytest import FixtureRequest
 from helpers import (
     APP_NAME,
     METADATA,
@@ -21,6 +20,7 @@ from helpers import (
     run_cli_action,
     run_setup_schema_action,
 )
+from pytest import FixtureRequest
 from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
