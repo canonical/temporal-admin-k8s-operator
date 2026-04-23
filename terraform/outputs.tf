@@ -7,3 +7,9 @@ output "provides" {
     admin = "admin"
   }
 }
+
+output "requires" {
+  value = {
+    temporal_host_info = "temporal-host-info"
+  }
+}
