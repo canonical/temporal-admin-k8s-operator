@@ -13,6 +13,7 @@ def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_tra
         admin_tools_latest_track,
         path=charm_path,
         resources=charm_resources,
+        base="ubuntu@24.04",
     )
 
     juju.integrate(
