@@ -10,10 +10,11 @@ import functools
 import json
 import logging
 
+import ops
 from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
 from ops import main
 from ops.charm import CharmBase
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
+from ops.model import ActiveStatus, BlockedStatus, WaitingStatus
 
 from state import State
 
@@ -63,15 +64,27 @@ class TemporalAdminK8SCharm(CharmBase):
         self._state = State(self.app, lambda: self.model.get_relation("peer"))
         self.name = "temporal-admin"
 
-        # Handle basic charm lifecycle.
-        self.framework.observe(self.on.install, self._on_install)
-        self.framework.observe(self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready)
+        # Route all reconcilable events to _reconcile
+        reconcile_events = [
+            self.on.install,
+            self.on.start,
+            self.on.config_changed,
+            self.on.upgrade_charm,
+            self.on.update_status,
+            self.on.leader_elected,
+            self.on["temporal-admin"].pebble_ready,
+            self.on["peer"].relation_changed,
+            self.on["admin"].relation_created,
+            self.on["admin"].relation_joined,
+            self.on["admin"].relation_changed,
+            self.on["admin"].relation_departed,
+            self.on["admin"].relation_broken,
+        ]
+        for event in reconcile_events:
+            self.framework.observe(event, self._reconcile)
 
-        # Handle admin:temporal relation.
-        self.framework.observe(self.on.admin_relation_changed, self._on_admin_relation_changed)
-        self.framework.observe(self.on.admin_relation_broken, self._on_admin_relation_broken)
-
-        # Handle action
+        # Dedicated handlers
+        self.framework.observe(self.on.collect_unit_status, self._on_collect_unit_status)
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
 
@@ -87,65 +100,95 @@ class TemporalAdminK8SCharm(CharmBase):
         stripped = str(raw).strip()
         return stripped or None
 
-    @log_event_handler
-    def _on_install(self, event):
-        """Install temporal admin tools.
-
-        Args:
-            event: The event triggered when the relation changed.
-        """
-        self.unit.status = MaintenanceStatus("installing temporal admin tools")
+    # -- Central Reconciliation Loop -----------------------------------
 
     @log_event_handler
-    def _on_temporal_admin_pebble_ready(self, event):
-        """Handle workload being ready.
+    def _reconcile(self, event):
+        """Central reconciliation loop for admin-only charm.
+
+        Read inputs -> compute state -> write outputs.
 
         Args:
-            event: The event triggered when the relation changed.
+            event: The event that triggered reconciliation.
         """
-        # Auto schema set up is only need once initially.
+        if not self._state.is_ready():
+            return
+
+        container = self.unit.get_container(self.name)
+        if not container.can_connect():
+            return
+
+        # Phase 1: Read inputs -- read admin relation data (safe to poll)
+        if self.unit.is_leader():
+            self._read_admin_relation_data(event)
+
+        # Phase 2/3: Run schema setup if db connections are available
+        if not self._state.database_connections:
+            return
+
+        # Auto schema set up is only needed once initially.
         if self._state.is_initial_schema_ready:
-            self.unit.status = ActiveStatus()
+            self.unit.set_workload_version(WORKLOAD_VERSION)
             return
 
         try:
-            self._setup_db_schemas(event)
+            self._setup_db_schemas(container)
         except Exception:
-            self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
-
-    @log_event_handler
-    def _on_admin_relation_changed(self, event):
-        """Handle changes on the admin:temporal relation.
-
-        Get reported database connection info. Then use that info to set up the
-        schema. Then report back that the schema is ready.
-
-        Args:
-            event: The event triggered when the relation changed.
-        """
-        if not self._state.is_ready():
-            event.defer()
+            logger.exception("Error setting up schema")
             return
 
-        self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
-        database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = json.loads(database_connections) if database_connections else None
-        self._setup_db_schemas(event)
+    def _read_admin_relation_data(self, event):
+        """Read database connections from admin relation and persist to peer state.
 
-    @log_event_handler
-    def _on_admin_relation_broken(self, event):
-        """Handle the admin:temporal relation being broken.
+        Safe to poll -- reads directly from relation databag.
 
         Args:
-            event: The event triggered when the relation was broken.
+            event: The event that triggered the read.
         """
-        if not self._state.is_ready():
-            event.defer()
+        # Handle relation-broken: clear state
+        if isinstance(event, ops.RelationBrokenEvent) and event.relation.name == "admin":
+            self._state.database_connections = None
+            self._state.is_initial_schema_ready = False
             return
 
-        self._state.database_connections = None
-        self._state.is_initial_schema_ready = False
-        self._setup_db_schemas(event)
+        admin_relations = self.model.relations["admin"]
+        if not admin_relations:
+            return
+
+        for relation in admin_relations:
+            database_connections = relation.data.get(relation.app, {}).get("database_connections")
+            if database_connections:
+                self._state.database_connections = json.loads(database_connections)
+                return
+
+    # -- Status Reporting ----------------------------------------------
+
+    def _on_collect_unit_status(self, event):
+        """Report unit status based on current state.
+
+        Args:
+            event: The collect-unit-status event.
+        """
+        container = self.unit.get_container(self.name)
+        if not container.can_connect():
+            event.add_status(WaitingStatus("Waiting for container"))
+            return
+
+        if not self._state.is_ready():
+            event.add_status(WaitingStatus("Waiting for peer relation"))
+            return
+
+        if not self._state.database_connections:
+            event.add_status(BlockedStatus("admin:temporal relation: database connections info not available"))
+            return
+
+        if not self._state.is_initial_schema_ready:
+            event.add_status(BlockedStatus("error setting up schema. remove relation and try again."))
+            return
+
+        event.add_status(ActiveStatus())
+
+    # -- Dedicated Handlers --------------------------------------------
 
     @log_event_handler
     def _on_cli_action(self, event):
@@ -160,7 +203,7 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         # Relation data is authoritative when available. For upgrade compatibility,
-        # fallback to deprecated `server-name` only when explicitly configured.
+        # fallback to deprecated server-name only when explicitly configured.
         if self.host_info.host and self.host_info.port:
             server_name = self.host_info.host
             server_port = self.host_info.port
@@ -190,17 +233,23 @@ class TemporalAdminK8SCharm(CharmBase):
         Args:
             event: The event triggered when the action is triggered.
         """
+        container = self.unit.get_container(self.name)
+        if not container.can_connect():
+            event.fail("cannot connect to container")
+            return
         try:
-            self._setup_db_schemas(event)
+            self._setup_db_schemas(container)
         except Exception as err:
-            event.fail(err)
+            event.fail(str(err))
+
+    # -- Helpers -------------------------------------------------------
 
     # flake8: noqa: C901
-    def _setup_db_schemas(self, event):
+    def _setup_db_schemas(self, container):
         """Initialize the db schemas if db connections info is available.
 
         Args:
-            event: The event triggered when the relation changed.
+            container: Container to execute commands in.
 
         Raises:
             Exception: if the schemas were not set up successfully.
@@ -208,17 +257,7 @@ class TemporalAdminK8SCharm(CharmBase):
         if not self.model.unit.is_leader():
             return
 
-        if not self._state.is_ready():
-            event.defer()
-            return
-
-        container = self.unit.get_container(self.name)
-        if not container.can_connect():
-            event.defer()
-            return
-
         if not self._state.database_connections:
-            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
         schema_dirs = {
@@ -282,10 +321,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
         admin_relations = self.model.relations["admin"]
         if not admin_relations:
-            # Can this happen? Probably in a race between hook execution and
-            # removed relation?
             logger.debug("admin:temporal: not notifying schema readiness: admin relation not available")
-            self.unit.status = BlockedStatus("admin:temporal relation: not available")
             return
         logger.info("notifying schemas are ready")
         for relation in admin_relations:
@@ -294,7 +330,6 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self._state.is_initial_schema_ready = True
         self.unit.set_workload_version(WORKLOAD_VERSION)
-        self.unit.status = ActiveStatus()
 
 
 def execute(container, command, *args):
