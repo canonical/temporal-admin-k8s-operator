@@ -39,7 +39,17 @@ async def deploy(ops_test: OpsTest, request: FixtureRequest):
 
     # Deploy temporal server, temporal admin and postgresql charms
     await ops_test.model.deploy(SERVER_APP_NAME, channel="1.23/edge", config={"num-history-shards": 1})
-    await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
+    # The local charm is built on the 26.04 base, which python-libjuju's supported-base list
+    # doesn't know about, so `ops_test.model.deploy` rejects it. Shell out to the Juju CLI
+    # (which has no such gate) for this one deploy; libjuju handles the Charmhub deps fine.
+    await ops_test.juju(
+        "deploy",
+        str(charm),
+        APP_NAME,
+        "--resource",
+        f"temporal-admin-image={resources['temporal-admin-image']}",
+        check=True,
+    )
     await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
 
     async with ops_test.fast_forward():
