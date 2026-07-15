@@ -230,7 +230,7 @@ class TemporalAdminK8SCharm(CharmBase):
             try:
                 command_args = [
                     "--plugin",
-                    "postgres",
+                    "postgres12",
                     "--endpoint",
                     database_connection["host"],
                     "--port",
@@ -254,7 +254,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
                 command_args = [
                     "--plugin",
-                    "postgres",
+                    "postgres12",
                     "--endpoint",
                     database_connection["host"],
                     "--port",
