@@ -23,7 +23,9 @@ def resolve_built_charm(project_root: pathlib.Path) -> pathlib.Path:
         return charms[0]
 
     charms = sorted(
-        path.absolute() for path in project_root.rglob("*.charm") if IGNORED_CHARM_DIRS.isdisjoint(path.parts)
+        path.absolute()
+        for path in project_root.rglob("*.charm")
+        if IGNORED_CHARM_DIRS.isdisjoint(path.relative_to(project_root).parts)
     )
     assert charms, "*.charm not found under project root"
     assert len(charms) == 1, "More than one *.charm file found under project root, unsure which to use"

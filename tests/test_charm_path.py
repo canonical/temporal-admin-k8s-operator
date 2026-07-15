@@ -30,6 +30,16 @@ def test_resolve_built_charm_finds_nested_artifact(tmp_path: pathlib.Path):
     assert resolve_built_charm(tmp_path) == nested_charm.absolute()
 
 
+def test_resolve_built_charm_finds_nested_artifact_under_tox_root(tmp_path: pathlib.Path):
+    """Find a nested artifact even when the project root itself lives under a tox path."""
+    project_root = tmp_path / ".tox" / "integration" / "tmp" / "project"
+    nested_charm = project_root / "build" / "temporal-admin-k8s.charm"
+    nested_charm.parent.mkdir(parents=True)
+    nested_charm.touch()
+
+    assert resolve_built_charm(project_root) == nested_charm.absolute()
+
+
 def test_resolve_built_charm_ignores_tox_artifacts(tmp_path: pathlib.Path):
     """Ignore charm artifacts located under tox-managed directories."""
     ignored_charm = tmp_path / ".tox" / "integration" / "temporal-admin-k8s.charm"
