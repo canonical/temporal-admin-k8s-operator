@@ -8,6 +8,7 @@ import pathlib
 import jubilant
 import pytest
 import yaml
+from tests.charm_path import resolve_built_charm
 
 POSTGRESQL_CHANNEL = "14/stable"
 TEMPORAL_CHANNEL = "1.23/edge"
@@ -96,11 +97,7 @@ def admin_tools_latest_track(juju: jubilant.Juju):
 @pytest.fixture(scope="module")
 def charm_path() -> pathlib.Path:
     """Returns the absolute path of the locally built admin-tools-k8s charm."""
-    charm_dir = pathlib.Path(__file__).parent.parent.parent
-    charms = [p.absolute() for p in charm_dir.glob("*.charm")]
-    assert charms, "*.charm not found in project root"
-    assert len(charms) == 1, "More than one *.charm file found in project root, unsure which to use"
-    return charms[0]
+    return resolve_built_charm(pathlib.Path(__file__).parent.parent.parent)
 
 
 @pytest.fixture(scope="module")
