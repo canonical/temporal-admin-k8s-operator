@@ -8,6 +8,7 @@ import pathlib
 import jubilant
 import pytest
 import yaml
+
 from tests.charm_path import resolve_built_charm
 
 POSTGRESQL_CHANNEL = "14/stable"
