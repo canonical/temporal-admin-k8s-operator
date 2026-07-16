@@ -7,11 +7,17 @@ import pathlib
 
 import jubilant
 import pytest
+import pytest_asyncio
 import yaml
+from pytest_operator.plugin import OpsTest
 
 POSTGRESQL_CHANNEL = "14/stable"
-TEMPORAL_CHANNEL = "1.23/edge"
-TEMPORAL_LEGACY_CHANNEL = "latest/stable"
+
+# Temporal charm channels. Bump these when the charms migrate to a new track
+# (e.g. 1.23 -> 1.31).
+TEMPORAL_CHANNEL = "1.23/edge"  # server dependency and the default admin deploy
+TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.23/stable"  # published admin release the refresh test upgrades from
+
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
@@ -38,7 +44,7 @@ def deploy_temporal_stack(
     temporal_channel: str = TEMPORAL_CHANNEL,
     temporal_admin_channel: str = TEMPORAL_CHANNEL,
 ):
-    """Deploy temporal-admin-k8s from the latest track.
+    """Deploy the temporal stack.
 
     Args:
         juju: Juju object (jubilant)
@@ -87,20 +93,29 @@ def deploy_temporal_stack(
 
 @pytest.fixture(scope="module")
 def admin_tools_latest_track(juju: jubilant.Juju):
-    """Deploy temporal-admin-k8s from the latest track."""
-    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_LEGACY_CHANNEL)
+    """Deploy the temporal stack with temporal-admin from the latest supported release.
+
+    The refresh test then upgrades this deployment to the newer, locally built charm.
+    """
+    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL)
 
     yield "temporal-admin-k8s"
 
 
-@pytest.fixture(scope="module")
-def charm_path() -> pathlib.Path:
-    """Returns the absolute path of the locally built admin-tools-k8s charm."""
-    charm_dir = pathlib.Path(__file__).parent.parent.parent
-    charms = [p.absolute() for p in charm_dir.glob("*.charm")]
-    assert charms, "*.charm not found in project root"
-    assert len(charms) == 1, "More than one *.charm file found in project root, unsure which to use"
-    return charms[0]
+@pytest_asyncio.fixture(scope="module")
+async def charm_path(request: pytest.FixtureRequest, ops_test: OpsTest) -> str | pathlib.Path:
+    """Build (or locate via --charm-file) the admin-tools-k8s charm and return its path.
+
+    Uses pytest-operator's build_charm so the artifact is managed the same way as
+    the rest of the integration suite. Relying on a pre-packed charm in the project
+    root or build/ does not work: pytest-operator's build_charm relocates root
+    *.charm files and deletes the build/ directory.
+    """
+    if charms := request.config.getoption("--charm-file"):
+        return charms[0]
+    charm = await ops_test.build_charm(".")
+    assert charm, "Charm not built"
+    return charm
 
 
 @pytest.fixture(scope="module")
