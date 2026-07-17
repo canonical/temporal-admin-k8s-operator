@@ -6,7 +6,7 @@
 import jubilant
 from conftest import TEMPORAL_SERVER_APP_NAME
 
-
+@pytest.skip("Skipping because of canonical/temporal-k8s-operator/issues/150")
 def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_track, charm_path, charm_resources):
     """Refresh from the latest supported temporal-admin-k8s release to the local build."""
     juju.refresh(
