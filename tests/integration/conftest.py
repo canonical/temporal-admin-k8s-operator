@@ -15,8 +15,8 @@ POSTGRESQL_CHANNEL = "14/stable"
 
 # Temporal charm channels. Bump these when the charms migrate to a new track
 # (e.g. 1.23 -> 1.31).
-TEMPORAL_CHANNEL = "1.23/edge"  # server dependency and the default admin deploy
-TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.23/stable"  # published admin release the refresh test upgrades from
+TEMPORAL_CHANNEL = "1.31/edge"  # server dependency and the default admin deploy
+TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.31/stable"  # published admin release the refresh test upgrades from
 
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
