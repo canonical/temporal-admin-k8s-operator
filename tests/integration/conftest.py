@@ -15,7 +15,7 @@ POSTGRESQL_CHANNEL = "14/stable"
 
 # Temporal charm channels. Bump these when the charms migrate to a new track
 # (e.g. 1.23 -> 1.31).
-TEMPORAL_CHANNEL = "1.23/edge"  # server dependency and the default admin deploy
+TEMPORAL_CHANNEL = "1.31/edge"  # server dependency and the default admin deploy
 TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.23/stable"  # published admin release the refresh test upgrades from
 
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
@@ -63,7 +63,7 @@ def deploy_temporal_stack(
         app="postgresql-k8s",
         channel=postgresql_channel,
         trust=True,
-        base="ubuntu@22.04",
+        base="ubuntu@24.04",
     )
 
     juju.deploy(
@@ -80,7 +80,7 @@ def deploy_temporal_stack(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
         channel=temporal_admin_channel,
-        base="ubuntu@22.04",
+        base="ubuntu@24.04",
     )
 
     juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
