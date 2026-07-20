@@ -63,7 +63,7 @@ def deploy_temporal_stack(
         app="postgresql-k8s",
         channel=postgresql_channel,
         trust=True,
-        base="ubuntu@22.04",
+        base="ubuntu@24.04",
     )
 
     juju.deploy(
@@ -80,7 +80,7 @@ def deploy_temporal_stack(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
         channel=temporal_admin_channel,
-        base="ubuntu@22.04",
+        base="ubuntu@24.04",
     )
 
     juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
