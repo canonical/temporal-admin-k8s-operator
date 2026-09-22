@@ -78,15 +78,6 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle temporal-host-info relation.
         self.host_info = TemporalHostInfoRequirer(self)
 
-    @property
-    def _deprecated_server_name(self) -> str | None:
-        """Return configured fallback server name, if set."""
-        raw = self.config.get("server-name")
-        if raw is None:
-            return None
-        stripped = str(raw).strip()
-        return stripped or None
-
     @log_event_handler
     def _on_install(self, event):
         """Install temporal admin tools.
@@ -159,20 +150,12 @@ class TemporalAdminK8SCharm(CharmBase):
             event.fail("cannot connect to container")
             return
 
-        # Relation data is authoritative when available. For upgrade compatibility,
-        # fallback to deprecated `server-name` only when explicitly configured.
+        # Relation data is the only source.
         if self.host_info.host and self.host_info.port:
             server_name = self.host_info.host
             server_port = self.host_info.port
-        elif deprecated := self._deprecated_server_name:
-            logger.warning(
-                "The `server-name` config option is deprecated and will be removed in a future release; "
-                "prefer the `temporal-host-info` relation."
-            )
-            server_name = deprecated
-            server_port = 7236
         else:
-            event.fail("temporal-host-info relation not established; set deprecated server-name config as fallback")
+            event.fail("temporal-host-info relation not established")
             return
         args = ["--address", f"{server_name}:{server_port}", *event.params["args"].split()]
         try:
