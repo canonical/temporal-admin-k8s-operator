@@ -26,9 +26,7 @@ for usage instructions.
 
 ### Temporal endpoint resolution
 
-`temporal-host-info` relation is the preferred source of Temporal server address. If relation data is unavailable, the deprecated `server-name` config option is used as a temporary fallback for upgrade compatibility.
-
-`server-name` is deprecated and will be removed in a future release. Prefer integrating `temporal-host-info` relation instead of relying on config fallback.
+`temporal-host-info` relation is the only source of Temporal server address.
 
 ## Contributing
 
