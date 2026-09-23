@@ -18,7 +18,7 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingSta
 from state import State
 
 logger = logging.getLogger(__name__)
-WORKLOAD_VERSION = "1.23.1"
+WORKLOAD_VERSION = "1.24.3"
 
 
 def log_event_handler(method):
@@ -63,20 +63,24 @@ class TemporalAdminK8SCharm(CharmBase):
         self._state = State(self.app, lambda: self.model.get_relation("peer"))
         self.name = "temporal-admin"
 
-        # Handle basic charm lifecycle.
-        self.framework.observe(self.on.install, self._on_install)
-        self.framework.observe(self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready)
-
-        # Handle admin:temporal relation.
-        self.framework.observe(self.on.admin_relation_changed, self._on_admin_relation_changed)
-        self.framework.observe(self.on.admin_relation_broken, self._on_admin_relation_broken)
-
-        # Handle action
-        self.framework.observe(self.on.cli_action, self._on_cli_action)
-        self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
-
         # Handle temporal-host-info relation.
         self.host_info = TemporalHostInfoRequirer(self)
+
+        # --- Reconciler: route ALL lifecycle/relation events to _reconcile ---
+        reconcile_events = [
+            self.on.install,
+            self.on.temporal_admin_pebble_ready,
+            # admin:temporal relation
+            self.on.admin_relation_changed,
+            self.on.admin_relation_broken,
+        ]
+        for event in reconcile_events:
+            self.framework.observe(event, self._reconcile)
+
+        # --- Dedicated handlers (actions, collect-status) ---
+        self.framework.observe(self.on.cli_action, self._on_cli_action)
+        self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
+        self.framework.observe(self.on.collect_unit_status, self._on_collect_unit_status)
 
     @property
     def _deprecated_server_name(self) -> str | None:
@@ -87,66 +91,73 @@ class TemporalAdminK8SCharm(CharmBase):
         stripped = str(raw).strip()
         return stripped or None
 
-    @log_event_handler
-    def _on_install(self, event):
-        """Install temporal admin tools.
+    # --- Collect Unit Status (single source of truth for status) ---
+    def _on_collect_unit_status(self, event):
+        """Set unit status based on current state.
 
         Args:
-            event: The event triggered when the relation changed.
+            event: The collect-unit-status event.
         """
-        self.unit.status = MaintenanceStatus("installing temporal admin tools")
-
-    @log_event_handler
-    def _on_temporal_admin_pebble_ready(self, event):
-        """Handle workload being ready.
-
-        Args:
-            event: The event triggered when the relation changed.
-        """
-        # Auto schema set up is only need once initially.
-        if self._state.is_initial_schema_ready:
-            self.unit.status = ActiveStatus()
+        if not self._state.is_ready():
+            event.add_status(WaitingStatus("waiting for peer relation"))
             return
 
+        container = self.unit.get_container(self.name)
+        if not container.can_connect():
+            event.add_status(WaitingStatus("waiting for pebble api"))
+            return
+
+        if not self._state.database_connections:
+            event.add_status(BlockedStatus("admin:temporal relation: database connections info not available"))
+            return
+
+        admin_relations = self.model.relations["admin"]
+        if not admin_relations:
+            event.add_status(BlockedStatus("admin:temporal relation: not available"))
+            return
+
+        if self._state.is_initial_schema_ready:
+            self.unit.set_workload_version(WORKLOAD_VERSION)
+            event.add_status(ActiveStatus())
+        else:
+            event.add_status(WaitingStatus("waiting for schema setup"))
+
+    # --- Reconcile (single entry point for all events) ---
+    @log_event_handler
+    def _reconcile(self, event):
+        """Reconcile the charm state.
+
+        Args:
+            event: The event triggered.
+        """
+        # Phase 1: Read and validate state
+        if not self._state.is_ready():
+            return
+
+        # Handle admin relation data
+        admin_relations = self.model.relations.get("admin", [])
+        if admin_relations:
+            for rel in admin_relations:
+                remote_app = rel.app
+                if remote_app and remote_app in rel.data:
+                    database_connections = rel.data[remote_app].get("database_connections")
+                    if database_connections:
+                        self._state.database_connections = json.loads(database_connections)
+        else:
+            self._state.database_connections = None
+            self._state.is_initial_schema_ready = False
+
+        # Auto schema setup on pebble ready if not already done
+        if self._state.is_initial_schema_ready:
+            return
+
+        # Phase 2: Attempt schema setup
         try:
             self._setup_db_schemas(event)
         except Exception:
-            self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
+            logger.exception("Error setting up schema")
 
-    @log_event_handler
-    def _on_admin_relation_changed(self, event):
-        """Handle changes on the admin:temporal relation.
-
-        Get reported database connection info. Then use that info to set up the
-        schema. Then report back that the schema is ready.
-
-        Args:
-            event: The event triggered when the relation changed.
-        """
-        if not self._state.is_ready():
-            event.defer()
-            return
-
-        self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
-        database_connections = event.relation.data[event.app].get("database_connections")
-        self._state.database_connections = json.loads(database_connections) if database_connections else None
-        self._setup_db_schemas(event)
-
-    @log_event_handler
-    def _on_admin_relation_broken(self, event):
-        """Handle the admin:temporal relation being broken.
-
-        Args:
-            event: The event triggered when the relation was broken.
-        """
-        if not self._state.is_ready():
-            event.defer()
-            return
-
-        self._state.database_connections = None
-        self._state.is_initial_schema_ready = False
-        self._setup_db_schemas(event)
-
+    # --- Dedicated action handlers ---
     @log_event_handler
     def _on_cli_action(self, event):
         """Run the temporal command line tool.
@@ -209,16 +220,13 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         if not self._state.is_ready():
-            event.defer()
             return
 
         container = self.unit.get_container(self.name)
         if not container.can_connect():
-            event.defer()
             return
 
         if not self._state.database_connections:
-            self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
         schema_dirs = {
@@ -282,10 +290,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
         admin_relations = self.model.relations["admin"]
         if not admin_relations:
-            # Can this happen? Probably in a race between hook execution and
-            # removed relation?
             logger.debug("admin:temporal: not notifying schema readiness: admin relation not available")
-            self.unit.status = BlockedStatus("admin:temporal relation: not available")
             return
         logger.info("notifying schemas are ready")
         for relation in admin_relations:
@@ -294,7 +299,6 @@ class TemporalAdminK8SCharm(CharmBase):
 
         self._state.is_initial_schema_ready = True
         self.unit.set_workload_version(WORKLOAD_VERSION)
-        self.unit.status = ActiveStatus()
 
 
 def execute(container, command, *args):

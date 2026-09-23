@@ -1,14 +1,14 @@
-# Copyright 2023 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Test to ensure successful refreshes from latest track to the 1.23 track."""
+"""Test to ensure successful refreshes from latest track to the 1.24 track."""
 
 import jubilant
 from conftest import TEMPORAL_SERVER_APP_NAME
 
 
 def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_track, charm_path, charm_resources):
-    """Test to refresh from latest track to the 1.23 track."""
+    """Test to refresh from latest track to the 1.24 track."""
     juju.refresh(
         admin_tools_latest_track,
         path=charm_path,
