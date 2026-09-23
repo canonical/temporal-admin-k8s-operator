@@ -1,4 +1,4 @@
-# Copyright 2023 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 # More extensive integration tests for this charm are at
@@ -38,7 +38,7 @@ async def deploy(ops_test: OpsTest, request: FixtureRequest):
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
-    await ops_test.model.deploy(SERVER_APP_NAME, channel="1.23/edge", config={"num-history-shards": 1})
+    await ops_test.model.deploy(SERVER_APP_NAME, channel="1.24/edge", config={"num-history-shards": 1})
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
     await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
 

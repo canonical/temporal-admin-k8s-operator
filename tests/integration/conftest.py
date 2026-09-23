@@ -1,4 +1,4 @@
-# Copyright 2023 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Fixtures for jubilant tests."""
@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
-TEMPORAL_CHANNEL = "1.23/edge"
+TEMPORAL_CHANNEL = "1.24/edge"
 TEMPORAL_LEGACY_CHANNEL = "latest/stable"
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 

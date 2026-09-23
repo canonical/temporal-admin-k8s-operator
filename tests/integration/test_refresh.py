@@ -1,4 +1,4 @@
-# Copyright 2023 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Test to ensure successful refreshes from latest track to the 1.23 track."""

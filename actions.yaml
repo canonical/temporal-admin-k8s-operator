@@ -1,4 +1,4 @@
-# Copyright 2023 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 cli:
@@ -11,4 +11,4 @@ cli:
   - args
 
 setup-schema:
-  description: Set up the database schema.
+  description: Initialize a new database or update existing Temporal schemas to this charm's version.

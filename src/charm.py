@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2023 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 #
 # Learn more at: https://juju.is/docs/sdk
@@ -18,7 +18,10 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingSta
 from state import State
 
 logger = logging.getLogger(__name__)
-WORKLOAD_VERSION = "1.23.1"
+WORKLOAD_VERSION = "1.24.3"
+SQL_TOOL = f"/bin/temporal-sql-tool-{WORKLOAD_VERSION}"
+SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
+
 
 
 def log_event_handler(method):
@@ -65,6 +68,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
         # Handle basic charm lifecycle.
         self.framework.observe(self.on.install, self._on_install)
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready)
 
         # Handle admin:temporal relation.
@@ -103,15 +107,31 @@ class TemporalAdminK8SCharm(CharmBase):
         Args:
             event: The event triggered when the relation changed.
         """
-        # Auto schema set up is only need once initially.
-        if self._state.is_initial_schema_ready:
-            self.unit.status = ActiveStatus()
-            return
 
         try:
             self._setup_db_schemas(event)
         except Exception:
             self.unit.status = BlockedStatus("error setting up schema. remove relation and try again.")
+
+    @log_event_handler
+    def _on_upgrade_charm(self, event):
+        """Reconcile the existing schemas after a charm refresh."""
+        self._load_database_connections()
+        try:
+            self._setup_db_schemas(event)
+        except Exception:
+            logger.exception("Error updating database schemas during charm refresh")
+            self.unit.status = BlockedStatus("error updating database schemas; inspect logs and retry")
+
+    def _load_database_connections(self):
+        """Read existing relation data; refresh need not emit relation-changed."""
+        for relation in self.model.relations.get("admin", []):
+            if relation.app is None:
+                continue
+            raw = relation.data[relation.app].get("database_connections")
+            if raw:
+                self._state.database_connections = json.loads(raw)
+                return
 
     @log_event_handler
     def _on_admin_relation_changed(self, event):
@@ -218,19 +238,37 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         if not self._state.database_connections:
+            self._load_database_connections()
+        if not self._state.database_connections:
             self.unit.status = BlockedStatus("admin:temporal relation: database connections info not available")
             return
 
+        peer = self.model.get_relation("peer")
+        if peer is None:
+            event.defer()
+            return
+        if self._state.schema_workload_version == WORKLOAD_VERSION:
+            self._publish_schema_status("ready", WORKLOAD_VERSION)
+            self.unit.set_workload_version(WORKLOAD_VERSION)
+            self.unit.status = ActiveStatus()
+            return
+
+        # This flag persists from the previous charm revision. An already
+        # initialized database must not be sent through setup-schema again.
+        initialize = not self._state.is_initial_schema_ready
+        self.unit.status = MaintenanceStatus("updating Temporal database schemas")
+        self._publish_schema_status("upgrading")
+
         schema_dirs = {
-            "db": "/etc/temporal/schema/postgresql/v12/temporal/versioned",
-            "visibility": "/etc/temporal/schema/postgresql/v12/visibility/versioned",
+            "db": f"{SCHEMA_ROOT}/temporal/versioned",
+            "visibility": f"{SCHEMA_ROOT}/visibility/versioned",
         }
         for key, database_connection in self._state.database_connections.items():
             logger.info(f"initializing {key} schema")
             try:
                 command_args = [
                     "--plugin",
-                    "postgres",
+                    "postgres12",
                     "--endpoint",
                     database_connection["host"],
                     "--port",
@@ -241,41 +279,16 @@ class TemporalAdminK8SCharm(CharmBase):
                     database_connection["user"],
                     "--password",
                     database_connection["password"],
-                    "setup-schema",
-                    "-v",
-                    "0.0",
                 ]
 
                 if database_connection.get("tls", False):
                     command_args.insert(2, "--tls")
                     command_args.insert(3, "--tls-disable-host-verification")
 
-                execute(container, "temporal-sql-tool", *command_args)
+                if initialize:
+                    execute(container, SQL_TOOL, *command_args, "setup-schema", "-v", "0.0")
 
-                command_args = [
-                    "--plugin",
-                    "postgres",
-                    "--endpoint",
-                    database_connection["host"],
-                    "--port",
-                    database_connection["port"],
-                    "--database",
-                    database_connection["dbname"],
-                    "--user",
-                    database_connection["user"],
-                    "--password",
-                    database_connection["password"],
-                    "update-schema",
-                    "-d",
-                    schema_dirs[key],
-                ]
-
-                # Conditionally add the TLS flags
-                if database_connection.get("tls", False):
-                    command_args.insert(2, "--tls")
-                    command_args.insert(3, "--tls-disable-host-verification")
-
-                execute(container, "temporal-sql-tool", *command_args)
+                execute(container, SQL_TOOL, *command_args, "update-schema", "-d", schema_dirs[key])
             except Exception as e:
                 logger.error(f"Error setting up schema: {e}")
                 raise Exception from e
@@ -287,14 +300,24 @@ class TemporalAdminK8SCharm(CharmBase):
             logger.debug("admin:temporal: not notifying schema readiness: admin relation not available")
             self.unit.status = BlockedStatus("admin:temporal relation: not available")
             return
-        logger.info("notifying schemas are ready")
-        for relation in admin_relations:
-            logger.debug(f"admin:temporal: notifying schema readiness on relation {relation.id}")
-            relation.data[self.app].update({"schema_status": "ready"})
-
         self._state.is_initial_schema_ready = True
+        self._state.schema_workload_version = WORKLOAD_VERSION
+        self._publish_schema_status("ready", WORKLOAD_VERSION)
         self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
+
+    def _publish_schema_status(self, status, version=None):
+        """Publish migration progress and the version proven ready to the server."""
+        if not self.unit.is_leader():
+            return
+        for relation in self.model.relations.get("admin", []):
+            data = {"schema_status": status}
+            if version is not None:
+                data["schema_version"] = version
+            else:
+                # A previous charm revision may have left a stale ready version.
+                relation.data[self.app].pop("schema_version", None)
+            relation.data[self.app].update(data)
 
 
 def execute(container, command, *args):
