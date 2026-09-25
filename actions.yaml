@@ -12,3 +12,6 @@ cli:
 
 setup-schema:
   description: Initialize a new database or update existing Temporal schemas to this charm's version.
+
+pre-upgrade-check:
+  description: Check current core and visibility schema versions and migration ownership. Does not verify backup availability or restorability.
