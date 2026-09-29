@@ -11,53 +11,51 @@ import json
 import logging
 import time
 
+import jubilant
 import pytest
-import pytest_asyncio
-from helpers import (
-    APP_NAME,
-    METADATA,
-    SERVER_APP_NAME,
-    run_cli_action,
-    run_setup_schema_action,
-)
-from pytest import FixtureRequest
-from pytest_operator.plugin import OpsTest
+from conftest import POSTGRESQL_CHANNEL, TEMPORAL_CHANNEL
+from helpers import APP_NAME, SERVER_APP_NAME, run_cli_action, run_setup_schema_action
+from jubilant import TaskError
 
 logger = logging.getLogger(__name__)
 
 
-@pytest_asyncio.fixture(name="deploy", scope="module")
-async def deploy(ops_test: OpsTest, request: FixtureRequest):
+@pytest.fixture(name="deploy", scope="module")
+def deploy(juju: jubilant.Juju, charm_path, charm_resources):
     """The app is up and running."""
-    await ops_test.model.set_config({"update-status-hook-interval": "1m"})
-    charm_paths = request.config.getoption("--charm-file")
-    if charm_paths:
-        charm = charm_paths[0]
-    else:
-        charm = await ops_test.build_charm(".")
-    resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
+    juju.model_config(values={"update-status-hook-interval": "1m"})
 
     # Deploy temporal server, temporal admin and postgresql charms
-    await ops_test.model.deploy(SERVER_APP_NAME, channel="1.23/edge", config={"num-history-shards": 1})
-    await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
-    await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
+    juju.deploy(
+        "postgresql-k8s",
+        app="postgresql-k8s",
+        channel=POSTGRESQL_CHANNEL,
+        trust=True,
+    )
+    juju.deploy(
+        SERVER_APP_NAME,
+        app=SERVER_APP_NAME,
+        channel=TEMPORAL_CHANNEL,
+        config={"num-history-shards": 1},
+    )
+    juju.deploy(
+        charm_path,
+        app=APP_NAME,
+        resources=charm_resources,
+    )
 
-    async with ops_test.fast_forward():
-        await ops_test.model.wait_for_idle(
-            apps=[SERVER_APP_NAME, APP_NAME], status="blocked", raise_on_blocked=False, timeout=600
-        )
-        await ops_test.model.wait_for_idle(
-            apps=["postgresql-k8s"], status="active", raise_on_blocked=False, timeout=600
-        )
+    juju.wait(lambda status: jubilant.all_blocked(status, SERVER_APP_NAME, APP_NAME), timeout=600)
+    juju.wait(lambda status: jubilant.all_active(status, "postgresql-k8s"), timeout=600)
 
-        await ops_test.model.integrate("temporal-k8s:db", "postgresql-k8s:database")
-        await ops_test.model.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
-        await ops_test.model.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
-        await ops_test.model.integrate(f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info")
+    juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
+    juju.integrate("temporal-k8s:visibility", "postgresql-k8s:database")
+    juju.integrate("temporal-k8s:admin", f"{APP_NAME}:admin")
+    juju.integrate(f"{SERVER_APP_NAME}:temporal-host-info", f"{APP_NAME}:temporal-host-info")
 
-        await ops_test.model.wait_for_idle(apps=[SERVER_APP_NAME], status="active", raise_on_blocked=False, timeout=600)
+    juju.wait(lambda status: jubilant.all_active(status, SERVER_APP_NAME), timeout=600)
 
-        assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
+    unit = juju.status().apps[APP_NAME].units[f"{APP_NAME}/0"]
+    assert unit.workload_status.current == "active"
 
 
 @pytest.mark.abort_on_fail
@@ -65,47 +63,34 @@ async def deploy(ops_test: OpsTest, request: FixtureRequest):
 class TestDeployment:
     """Integration tests for Temporal admin charm."""
 
-    async def test_cli_action(self, ops_test: OpsTest):
+    def test_cli_action(self, juju: jubilant.Juju):
         """Is it possible to run cli command via the action."""
-        await run_cli_action(ops_test, namespace="default")
+        run_cli_action(juju, namespace="default")
 
-    async def test_setup_schema_action(self, ops_test: OpsTest):
+    def test_setup_schema_action(self, juju: jubilant.Juju):
         """Is it possible to run setup schema via the action."""
-        await run_setup_schema_action(ops_test)
+        run_setup_schema_action(juju)
 
-    async def test_openfga_relation(self, ops_test: OpsTest):
+    def test_openfga_relation(self, juju: jubilant.Juju):
         """Add OpenFGA relation and authorization model."""
-        await ops_test.model.applications[SERVER_APP_NAME].set_config({"auth-enabled": "true"})
-        await ops_test.model.deploy("openfga-k8s", channel="latest/edge")
-        await ops_test.model.wait_for_idle(
-            apps=[SERVER_APP_NAME, "openfga-k8s"],
-            status="blocked",
-            raise_on_blocked=False,
+        juju.config(SERVER_APP_NAME, {"auth-enabled": True})
+        juju.deploy("openfga-k8s", app="openfga-k8s", channel="latest/edge")
+        juju.wait(
+            lambda status: jubilant.all_blocked(status, SERVER_APP_NAME, "openfga-k8s"),
             timeout=1200,
         )
 
         logger.info("adding openfga postgresql relation")
-        await ops_test.model.integrate("openfga-k8s:database", "postgresql-k8s:database")
+        juju.integrate("openfga-k8s:database", "postgresql-k8s:database")
 
-        await ops_test.model.wait_for_idle(
-            apps=["openfga-k8s"],
-            status="active",
-            raise_on_blocked=False,
-            timeout=1200,
-        )
+        juju.wait(lambda status: jubilant.all_active(status, "openfga-k8s"), timeout=1200)
 
         logger.info("adding openfga relation")
-        await ops_test.model.integrate(SERVER_APP_NAME, "openfga-k8s")
+        juju.integrate(SERVER_APP_NAME, "openfga-k8s")
 
-        await ops_test.model.wait_for_idle(
-            apps=[SERVER_APP_NAME],
-            status="blocked",
-            raise_on_blocked=False,
-            timeout=600,
-        )
+        juju.wait(lambda status: jubilant.all_blocked(status, SERVER_APP_NAME), timeout=600)
 
         logger.info("running the create authorization model action")
-        temporal_unit = ops_test.model.applications[SERVER_APP_NAME].units[0]
         with open("./temporal_auth_model.json", "r", encoding="utf-8") as model_file:
             model_data = model_file.read()
 
@@ -115,37 +100,36 @@ class TestDeployment:
             model_data = json.dumps(data, separators=(",", ":"))
 
             for i in range(10):
-                action = await temporal_unit.run_action(
-                    "create-authorization-model",
-                    model=model_data,
-                )
-                result = await action.wait()
-                logger.info(f"attempt {i} -> action result {result.status} {result.results}")
-                if result.status == "completed" and result.results == {"return-code": 0}:
-                    break
+                try:
+                    task = juju.run(
+                        f"{SERVER_APP_NAME}/0",
+                        "create-authorization-model",
+                        {"model": model_data},
+                    )
+                    logger.info("attempt %s -> action result %s %s", i, task.status, task.results)
+                    if task.status == "completed" and task.return_code == 0:
+                        break
+                except TaskError as exc:
+                    logger.info(
+                        "attempt %s -> action result %s %s",
+                        i,
+                        exc.task.status,
+                        exc.task.results,
+                    )
                 time.sleep(2)
 
-        await ops_test.model.wait_for_idle(
-            apps=[SERVER_APP_NAME],
-            status="active",
-            raise_on_blocked=True,
-            timeout=300,
-        )
+        juju.wait(lambda status: jubilant.all_active(status, SERVER_APP_NAME), timeout=300)
 
-        assert ops_test.model.applications[APP_NAME].status == "active"
+        assert juju.status().apps[APP_NAME].app_status.current == "active"
 
-        await run_cli_action(ops_test, namespace="integrations")
+        run_cli_action(juju, namespace="integrations")
 
-    async def test_remove_server(self, ops_test: OpsTest):
+    def test_remove_server(self, juju: jubilant.Juju):
         """Admin charm goes to blocked state once relation with the server charm is removed."""
-        await ops_test.model.applications[SERVER_APP_NAME].destroy()
-        await ops_test.model.block_until(lambda: SERVER_APP_NAME not in ops_test.model.applications)
+        juju.remove_application(SERVER_APP_NAME)
+        juju.wait(lambda status: SERVER_APP_NAME not in status.apps, timeout=300)
 
-        await ops_test.model.wait_for_idle(
-            apps=[APP_NAME],
-            status="blocked",
-            raise_on_blocked=False,
-            timeout=300,
-        )
+        juju.wait(lambda status: jubilant.all_blocked(status, APP_NAME), timeout=300)
 
-        assert ops_test.model.applications[APP_NAME].units[0].workload_status == "blocked"
+        unit = juju.status().apps[APP_NAME].units[f"{APP_NAME}/0"]
+        assert unit.workload_status.current == "blocked"

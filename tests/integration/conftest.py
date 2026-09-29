@@ -7,9 +7,7 @@ import pathlib
 
 import jubilant
 import pytest
-import pytest_asyncio
 import yaml
-from pytest_operator.plugin import OpsTest
 
 POSTGRESQL_CHANNEL = "14/stable"
 
@@ -22,20 +20,6 @@ TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
 UPSTREAM_IMAGE_SOURCE = METADATA["resources"]["temporal-admin-image"]["upstream-source"]
-
-
-@pytest.fixture(scope="module")
-def juju(request: pytest.FixtureRequest):
-    keep_models = bool(request.config.getoption("--keep-models"))
-
-    with jubilant.temp_model(keep=keep_models) as model:
-        model.wait_timeout = 10 * 60
-
-        yield model
-
-        if request.session.testsfailed:
-            log = model.debug_log(limit=1000)
-            print(log, end="")
 
 
 def deploy_temporal_stack(
@@ -88,7 +72,7 @@ def deploy_temporal_stack(
 
     juju.integrate("temporal-k8s:admin", "temporal-admin-k8s:admin")
 
-    juju.wait(jubilant.all_active)
+    juju.wait(jubilant.all_active, timeout=600)
 
 
 @pytest.fixture(scope="module")
@@ -102,20 +86,20 @@ def admin_tools_latest_track(juju: jubilant.Juju):
     yield "temporal-admin-k8s"
 
 
-@pytest_asyncio.fixture(scope="module")
-async def charm_path(request: pytest.FixtureRequest, ops_test: OpsTest) -> str | pathlib.Path:
-    """Build (or locate via --charm-file) the admin-tools-k8s charm and return its path.
+@pytest.fixture(scope="module")
+def charm_path(request: pytest.FixtureRequest) -> pathlib.Path:
+    """Return the path to the locally packed temporal-admin-k8s charm.
 
-    Uses pytest-operator's build_charm so the artifact is managed the same way as
-    the rest of the integration suite. Relying on a pre-packed charm in the project
-    root or build/ does not work: pytest-operator's build_charm relocates root
-    *.charm files and deletes the build/ directory.
+    Uses ``--charm-file`` when provided. Otherwise requires exactly one ``*.charm``
+    file in the project root.
     """
     if charms := request.config.getoption("--charm-file"):
-        return charms[0]
-    charm = await ops_test.build_charm(".")
-    assert charm, "Charm not built"
-    return charm
+        return pathlib.Path(charms[0])
+
+    packed = sorted(pathlib.Path(".").glob("*.charm"))
+    assert packed, "*.charm not found in project root; pack the charm first (charmcraft pack)"
+    assert len(packed) == 1, f"more than one *.charm in project root, unsure which to use: {packed}"
+    return packed[0].resolve()
 
 
 @pytest.fixture(scope="module")

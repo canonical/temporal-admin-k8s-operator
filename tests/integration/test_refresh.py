@@ -23,4 +23,4 @@ def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_tra
         f"{admin_tools_latest_track}:temporal-host-info",
     )
 
-    juju.wait(jubilant.all_active, error=jubilant.any_error)
+    juju.wait(jubilant.all_active, error=jubilant.any_error, timeout=600)

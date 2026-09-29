@@ -6,8 +6,8 @@
 import logging
 from pathlib import Path
 
+import jubilant
 import yaml
-from pytest_operator.plugin import OpsTest
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
@@ -16,41 +16,51 @@ SERVER_APP_NAME = "temporal-k8s"
 logger = logging.getLogger(__name__)
 
 
-async def run_cli_action(ops_test: OpsTest, namespace):
+def _unit_workload_status(juju: jubilant.Juju, app: str) -> str:
+    """Return the workload status of unit 0 for an application.
+
+    Args:
+        juju: Jubilant Juju client.
+        app: Application name.
+
+    Returns:
+        Workload status string for ``{app}/0``.
+    """
+    status = juju.status()
+    return status.apps[app].units[f"{app}/0"].workload_status.current
+
+
+def run_cli_action(juju: jubilant.Juju, namespace: str) -> None:
     """Run cli action from the admin charm to create a namespace.
 
     Args:
-        ops_test: PyTest object.
+        juju: Jubilant Juju client.
         namespace: Namespace to create in Temporal server.
     """
-    action = (
-        await ops_test.model.applications[APP_NAME]
-        .units[0]
-        .run_action("cli", args=f"operator namespace --namespace {namespace} create")
+    task = juju.run(
+        f"{APP_NAME}/0",
+        "cli",
+        {"args": f"operator namespace --namespace {namespace} create"},
+        wait=600,
     )
-    action_output = await action.wait()
+    logger.info("cli result: %s", task.results)
 
-    logger.info(f"cli result: {action_output.results}")
+    juju.wait(lambda status: jubilant.all_active(status, APP_NAME), timeout=600)
 
-    await ops_test.model.wait_for_idle(apps=[APP_NAME], status="active", raise_on_blocked=False, timeout=600)
-
-    assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
-    assert (
-        "output" in action_output.results
-    ) and f"Namespace {namespace} successfully registered" in action_output.results["output"]
+    assert _unit_workload_status(juju, APP_NAME) == "active"
+    assert "output" in task.results
+    assert f"Namespace {namespace} successfully registered" in task.results["output"]
 
 
-async def run_setup_schema_action(ops_test: OpsTest):
+def run_setup_schema_action(juju: jubilant.Juju) -> None:
     """Run setup schema action from the admin charm.
 
     Args:
-        ops_test: PyTest object.
+        juju: Jubilant Juju client.
     """
-    action = await ops_test.model.applications[APP_NAME].units[0].run_action("setup-schema")
-    result = (await action.wait()).results
+    task = juju.run(f"{APP_NAME}/0", "setup-schema", wait=600)
+    logger.info("schema setup result: %s", task.results)
 
-    logger.info(f"schema setup result: {result}")
+    juju.wait(lambda status: jubilant.all_active(status, APP_NAME), timeout=600)
 
-    await ops_test.model.wait_for_idle(apps=[APP_NAME], status="active", raise_on_blocked=False, timeout=600)
-
-    assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
+    assert _unit_workload_status(juju, APP_NAME) == "active"
