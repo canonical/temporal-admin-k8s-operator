@@ -24,6 +24,7 @@ unit = [
 integration = [
     "ipdb==0.13.9",
     "pytest>=9,<10",
+    "jubilant>=1.8,<2",
     "pytest-jubilant>=2,<3",
 ]
 
@@ -32,7 +33,7 @@ lint = [
     "mypy",
     "pylint",
     "pydocstyle",
-    "pytest",
+    "pytest>=9,<10",
     "black==23.12.1",
     "codespell==2.2.5",
     "flake8==7.0.0",

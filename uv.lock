@@ -354,14 +354,14 @@ wheels = [
 
 [[package]]
 name = "jubilant"
-version = "1.4.0"
+version = "1.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/1a/ba5838825ac99db4ceec68fa146b594c97b682cf3ccf670b1ecf1261209d/jubilant-1.4.0.tar.gz", hash = "sha256:aa377699a8811fea29bfe0febb6b552d4593c02e666f5ba8c3fba24258700199", size = 27502, upload-time = "2025-08-27T00:11:46.295Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/db/73a1732d9f6ad8521f05f31abcf6afca4df8908cd545e1acd19e7042e0ea/jubilant-1.13.0.tar.gz", hash = "sha256:38131c1f07a05d83e42a24866450949717783edfc2307558e7d4aa0bdfd388a6", size = 37151, upload-time = "2026-08-31T06:06:08.505Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/06/4965ed70d4b9d405c8bdefc4926d94cae202014b4488a25aa8c1fe9fb462/jubilant-1.4.0-py3-none-any.whl", hash = "sha256:1df7eaf125fad8d0d3d35e6d83eca43bfbb7884debcd6c7f4b0822600e2a485c", size = 27185, upload-time = "2025-08-27T00:11:44.851Z" },
+    { url = "https://files.pythonhosted.org/packages/70/56/5dace82567f6ed14fec490fd8314a0db80a0baedbdaa946d292661bf6455/jubilant-1.13.0-py3-none-any.whl", hash = "sha256:a31ffd77dea7045004f6abddc71bf72082c3d003374bf22ea41b5d5588dc83a8", size = 39472, upload-time = "2026-08-31T06:06:07.266Z" },
 ]
 
 [[package]]
@@ -762,6 +762,7 @@ dev = [
     { name = "flake8-test-docs" },
     { name = "ipdb" },
     { name = "isort" },
+    { name = "jubilant" },
     { name = "mypy" },
     { name = "ops", extra = ["testing"] },
     { name = "pep8-naming" },
@@ -777,6 +778,7 @@ fmt = [
 ]
 integration = [
     { name = "ipdb" },
+    { name = "jubilant" },
     { name = "pytest" },
     { name = "pytest-jubilant" },
 ]
@@ -820,6 +822,7 @@ requires-dist = [
     { name = "ipdb", marker = "extra == 'unit'", specifier = "==0.13.9" },
     { name = "isort", marker = "extra == 'fmt'", specifier = "==5.12.0" },
     { name = "isort", marker = "extra == 'lint'", specifier = "==5.12.0" },
+    { name = "jubilant", marker = "extra == 'integration'", specifier = ">=1.8,<2" },
     { name = "mypy", marker = "extra == 'lint'" },
     { name = "ops", marker = "extra == 'charm'", specifier = "==2.21.1" },
     { name = "ops", extras = ["testing"], marker = "extra == 'unit'", specifier = "==2.21.1" },
@@ -828,7 +831,7 @@ requires-dist = [
     { name = "pylint", marker = "extra == 'lint'" },
     { name = "pyproject-flake8", marker = "extra == 'lint'", specifier = "==7.0.0" },
     { name = "pytest", marker = "extra == 'integration'", specifier = ">=9,<10" },
-    { name = "pytest", marker = "extra == 'lint'" },
+    { name = "pytest", marker = "extra == 'lint'", specifier = ">=9,<10" },
     { name = "pytest", marker = "extra == 'unit'", specifier = ">=9,<10" },
     { name = "pytest-jubilant", marker = "extra == 'integration'", specifier = ">=2,<3" },
     { name = "temporal-admin-k8s-operator", extras = ["charm", "unit", "integration", "lint", "fmt"], marker = "extra == 'dev'" },
