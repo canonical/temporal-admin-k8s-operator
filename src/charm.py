@@ -84,6 +84,15 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_upgrade_charm(self, event):
+        """Run schema migrations after the charm is upgraded.
+
+        Mark schema migration as pending and attempt to update the Temporal
+        database and visibility schemas using credentials from the available
+        admin relations.
+
+        Args:
+            event: The upgrade-charm event.
+        """
         if not self.unit.is_leader():
             return
 
@@ -200,12 +209,29 @@ class TemporalAdminK8SCharm(CharmBase):
             event.fail("schema migration incomplete; inspect charm logs")
 
     # flake8: noqa: C901
-    def _setup_db_schemas(self, event, excluded_relation_id=None):
+    def _setup_db_schemas(self, event):
+        """Initialize and migrate the Temporal database schemas.
+
+        Iterate through the available admin relations and use their database
+        connections to initialize and update the Temporal and visibility schemas.
+        Each schema is attempted with available relation credentials until a
+        migration succeeds.
+
+        On successful migration of all schemas, mark the initial schema as ready,
+        clear the pending upgrade state, publish schema readiness to admin
+        relations, and set the unit to active.
+
+        Args:
+            event: The event that triggered the schema migration.
+
+        Returns:
+            True if all required schemas were migrated successfully, False if
+            migration could not be completed.
+        """
         if not self.model.unit.is_leader() or not self._state.is_ready():
             event.defer()
             return
 
-        self._publish_schema_status("migrating")
         container = self.unit.get_container(self.name)
         if not container.can_connect():
             event.defer()
@@ -276,32 +302,26 @@ class TemporalAdminK8SCharm(CharmBase):
         for relation in self.model.relations.get("admin", []):
             relation.data[self.app].update({"schema_status": "ready"})
 
-    def _publish_schema_status(self, status, version=None):
-        """Publish migration progress and the version proven ready to the server."""
-        if not self.unit.is_leader():
-            return
-        for relation in self.model.relations.get("admin", []):
-            data = {"schema_status": status}
-            if version is not None:
-                data["schema_version"] = version
-            else:
-                # A previous charm revision may have left a stale ready version.
-                relation.data[self.app].pop("schema_version", None)
-            relation.data[self.app].update(data)
 
+def execute(container, command, *args):
+    """Execute the given command in the given container.
+    Log the output and any warnings.
+    Args:
+        container: Container to execute command in.
+        command: Command to be executed.
+        args: Additional arguments needed for command execution.
 
-def execute(container, command, *args, environment=None, timeout=60):
+    Returns:
+        Output from executing the command.
+    """
     cmd = [command] + list(args)
-    proc = container.exec(cmd, timeout=timeout, environment=environment)
-    # wait_output() automatically raises ops.pebble.ExecError if exit code != 0
+    proc = container.exec(cmd, timeout=60)
     output, warnings = proc.wait_output()
-
     for line in output.splitlines():
         logger.debug(f"{command}: {line.strip()}")
     if warnings:
         for line in warnings.splitlines():
             logger.warning(f"{command}: {line.strip()}")
-
     return output
 
 
