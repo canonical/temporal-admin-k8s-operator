@@ -14,7 +14,13 @@ import time
 import jubilant
 import pytest
 from conftest import POSTGRESQL_CHANNEL, TEMPORAL_CHANNEL
-from helpers import APP_NAME, SERVER_APP_NAME, run_cli_action, run_setup_schema_action
+from helpers import (
+    APP_NAME,
+    SERVER_APP_NAME,
+    run_cli_action,
+    run_setup_schema_action,
+    unit_workload_status,
+)
 from jubilant import TaskError
 
 logger = logging.getLogger(__name__)
@@ -54,8 +60,7 @@ def deploy(juju: jubilant.Juju, charm_path, charm_resources):
 
     juju.wait(lambda status: jubilant.all_active(status, SERVER_APP_NAME), timeout=600)
 
-    unit = juju.status().apps[APP_NAME].units[f"{APP_NAME}/0"]
-    assert unit.workload_status.current == "active"
+    assert unit_workload_status(juju, APP_NAME) == "active"
 
 
 @pytest.mark.abort_on_fail
@@ -131,5 +136,4 @@ class TestDeployment:
 
         juju.wait(lambda status: jubilant.all_blocked(status, APP_NAME), timeout=300)
 
-        unit = juju.status().apps[APP_NAME].units[f"{APP_NAME}/0"]
-        assert unit.workload_status.current == "blocked"
+        assert unit_workload_status(juju, APP_NAME) == "blocked"
