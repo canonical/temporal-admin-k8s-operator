@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.24.3"
 SQL_TOOL = f"/bin/temporal-sql-tool-{WORKLOAD_VERSION}"
 SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
-SCHEMA_VERSIONS = {"db": "1.12", "visibility": "1.6"}
 
 
 def log_event_handler(method):
@@ -79,10 +78,23 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
-        self.framework.observe(self.on.pre_upgrade_check_action, self._on_pre_upgrade_check_action)
-
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         # Handle temporal-host-info relation.
         self.host_info = TemporalHostInfoRequirer(self)
+
+    @log_event_handler
+    def _on_upgrade_charm(self, event):
+        if not self.unit.is_leader():
+            return
+
+        if not self._state.is_ready():
+            event.defer()
+            return
+
+        self._state.upgrade_schema_pending = True
+        for relation in self.model.relations.get("admin", []):
+            relation.data[self.app].update({"schema_status": "updating"})
+        self._setup_db_schemas(event)
 
     @property
     def _deprecated_server_name(self) -> str | None:
@@ -104,85 +116,28 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_temporal_admin_pebble_ready(self, event):
-        """Handle workload being ready.
-
-        Args:
-            event: The event triggered when the relation changed.
-        """
-
-        self._reconcile_schemas(event)
-
-    @log_event_handler
-    def _on_upgrade_charm(self, event):
-        """Reconcile schemas after refresh, invalidating old readiness first."""
-        logger.warning(
-            "A verified PostgreSQL backup is required before refresh; backup status is not checked by this charm"
-        )
-        if self.unit.is_leader():
-            self._publish_schema_status("migrating")
-            if self._state.is_ready():
-                self._state.schema_workload_version = None
-        self._reconcile_schemas(event)
-
-    def _load_database_connections(self, excluded_relation_id=None):
-        """Select and pin an authorized existing relation for each database."""
-        candidates = {}
-        for relation in sorted(self.model.relations.get("admin", []), key=lambda r: r.id):
-            if relation.app and relation.id != excluded_relation_id:
-                raw = relation.data[relation.app].get("database_connections")
-                if raw:
-                    candidates[str(relation.id)] = json.loads(raw)
-
-        if not candidates:
-            raise ValueError("admin:temporal relation: database connections info not available")
-
-        pinned = self._state.migration_relations or {}
-        selected, sources = {}, {}
-
-        for key in SCHEMA_VERSIONS:
-            endpoints = {
-                (c[key]["host"], str(c[key]["port"]), c[key]["dbname"]) for c in candidates.values() if c.get(key)
-            }
-            if len(endpoints) != 1:
-                raise ValueError(f"{key}: admin relations must refer to the same database endpoint")
-
-            for relation_id, connections in candidates.items():
-                if key in pinned and relation_id != pinned[key]:
-                    continue
-                if not connections.get(key):
-                    continue
-                selected[key], sources[key] = connections[key], relation_id
-                break
-
-            if key not in selected:
-                raise ValueError(f"{key}: no authorized migration identity; check pinned admin relation")
-
-        return selected, sources
-
-    def _reconcile_schemas(self, event, excluded_relation_id=None):
-        """Keep failed migrations blocked and retryable without removing relations."""
-        try:
-            self._setup_db_schemas(event, excluded_relation_id)
-        except Exception as error:
-            self._publish_schema_status("failed")
-            self.unit.status = BlockedStatus(f"{error}; run pre-upgrade-check, then setup-schema")
-            logger.error("Schema migration failed: %s", error)
+        """Initialize schemas after Pebble starts, or publish existing readiness."""
+        if not self.unit.is_leader():
+            return
+        if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
+            self._publish_ready_to_admin_relations()
+            return
+        self._setup_db_schemas(event)
 
     @log_event_handler
     def _on_admin_relation_changed(self, event):
-        """Handle changes on the admin:temporal relation.
-
-        Get reported database connection info. Then use that info to set up the
-        schema. Then report back that the schema is ready.
-
-        Args:
-            event: The event triggered when the relation changed.
-        """
+        """Migrate when credentials arrive and publish readiness on a new relation."""
+        if not self.unit.is_leader():
+            return
         if not self._state.is_ready():
             event.defer()
             return
-
-        self._reconcile_schemas(event)
+        if not event.app or not event.relation.data[event.app].get("database_connections"):
+            return
+        if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
+            self._publish_ready_to_admin_relations()
+            return
+        self._setup_db_schemas(event)
 
     @log_event_handler
     def _on_admin_relation_broken(self, event):
@@ -191,11 +146,13 @@ class TemporalAdminK8SCharm(CharmBase):
         Args:
             event: The event triggered when the relation was broken.
         """
-        if not self._state.is_ready():
-            event.defer()
+        if not self.unit.is_leader():
             return
-
-        self._reconcile_schemas(event, excluded_relation_id=event.relation.id)
+        if not self._state.is_ready():
+            self.unit.status = BlockedStatus("peer relation unavailable")
+            return
+        if not self.model.relations.get("admin"):
+            self.unit.status = BlockedStatus("admin:temporal relation: not available")
 
     @log_event_handler
     def _on_cli_action(self, event):
@@ -235,38 +192,12 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_setup_schema_action(self, event):
-        """Set up the database schemas.
-
-        Args:
-            event: The event triggered when the action is triggered.
-        """
-        try:
-            self._setup_db_schemas(event)
-        except Exception as err:
-            self._publish_schema_status("failed")
-            self.unit.status = BlockedStatus(str(err))
-            event.fail(str(err))
-
-    def _on_pre_upgrade_check_action(self, event):
-        """Check migration readiness configuration."""
+        """Run migrations explicitly with all available admin credentials."""
         if not self._state.is_ready():
-            event.fail("peer relation not ready")
+            event.fail("peer relation unavailable")
             return
-        try:
-            connections, sources = self._load_database_connections()
-        except Exception as error:
-            event.fail(str(error))
-            return
-
-        event.set_results(
-            {
-                "target-version": WORKLOAD_VERSION,
-                "schemas": "Dynamic validation handled by sql-tool during setup-schema",
-                "migration-users": json.dumps({key: c["user"] for key, c in connections.items()}),
-                "migration-relations": json.dumps(sources),
-                "backup": "NOT VERIFIED: create and restore-test a PostgreSQL charm backup before refresh",
-            }
-        )
+        if not self._setup_db_schemas(event):
+            event.fail("schema migration incomplete; inspect charm logs")
 
     # flake8: noqa: C901
     def _setup_db_schemas(self, event, excluded_relation_id=None):
@@ -280,80 +211,70 @@ class TemporalAdminK8SCharm(CharmBase):
             event.defer()
             return
 
-        # Versions removed from return unpack
-        connections, sources = self._load_database_connections(excluded_relation_id)
-
-        self._state.migration_relations = sources
-        self._state.database_connections = connections
-        self.unit.status = MaintenanceStatus("updating Temporal database schemas")
-
         schema_dirs = {
             "db": f"{SCHEMA_ROOT}/temporal/versioned",
             "visibility": f"{SCHEMA_ROOT}/visibility/versioned",
         }
 
-        for key, database_connection in connections.items():
-            logger.info("Migrating %s using relation %s user %s", key, sources[key], database_connection["user"])
-
-            command_args = [
-                "--plugin", "postgres12",
-                "--endpoint", database_connection["host"],
-                "--port", str(database_connection["port"]),
-                "--database", database_connection["dbname"],
-                "--user", database_connection["user"],
-            ]
-
-            if database_connection.get("tls", False):
-                command_args.extend(["--tls", "--tls-disable-host-verification"])
-
-            environment = {"SQL_PASSWORD": database_connection["password"]}
-
-            try:
-                # Optimistically attempt to update the schema
-                execute(
-                    container, SQL_TOOL, *command_args, "update-schema", "-d", schema_dirs[key],
-                    environment=environment, timeout=1800
-                )
-            except ExecError as error:
-                err_out = str(error.stderr or error.stdout).lower()
-
-                # Check if error is due to a brand-new database missing the schema table
-                if "relation \"schema_version\" does not exist" in err_out or "not found" in err_out:
-                    logger.info(f"{key}: schema_version table missing. Initializing schema first.")
-                    try:
-                        execute(
-                            container, SQL_TOOL, *command_args, "setup-schema", "-v", "0.0",
-                            environment=environment, timeout=1800
-                        )
-                        # Retry the update
-                        execute(
-                            container, SQL_TOOL, *command_args, "update-schema", "-d", schema_dirs[key],
-                            environment=environment, timeout=1800
-                        )
-                    except ExecError as setup_error:
-                        setup_err_msg = str(setup_error.stderr or setup_error.stdout)
-                        logger.error(f"{key} setup-schema failed: {setup_err_msg}")
-                        raise ValueError(f"Failed to initialize {key} schema. Check logs.") from setup_error
-
-                # Check if error is due to insufficient privileges (graceful failure)
-                elif "permission denied" in err_out or "privilege" in err_out:
-                    logger.error(f"Permission denied for {key}: {err_out}")
-                    raise ValueError(f"{key} migration failed: Insufficient database privileges.") from error
-
-                else:
-                    logger.error(f"{key} schema tool failed: {err_out}")
-                    raise ValueError(f"{key} migration failed. See logs for details.") from error
-
-        admin_relations = self.model.relations.get("admin")
-        if not admin_relations:
+        pending = set(schema_dirs)
+        relations = sorted(self.model.relations.get("admin", []), key=lambda relation: relation.id)
+        if not relations:
             self.unit.status = BlockedStatus("admin:temporal relation: not available")
-            return
+            return False
 
+        for relation in relations:
+            if not relation.app:
+                continue
+            database_connections = relation.data[relation.app].get("database_connections")
+            if not database_connections:
+                continue
+            try:
+                connections = json.loads(database_connections)
+            except (TypeError, ValueError):
+                logger.warning("Invalid database_connections on admin relation %s", relation.id)
+                continue
+            for key in tuple(pending):
+                connection = connections.get(key)
+                if not connection:
+                    continue
+                try:
+                    args = [
+                        "--plugin", "postgres12", "--endpoint", connection["host"],
+                        "--port", str(connection["port"]), "--database", connection["dbname"],
+                        "--user", connection["user"], "--password", connection["password"],
+                    ]
+                    if connection.get("tls", False):
+                        args[2:2] = ["--tls", "--tls-disable-host-verification"]
+
+                    execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0")
+                    execute(container, SQL_TOOL, *args, "update-schema", "-d", schema_dirs[key])
+                except Exception as exc:
+                    logger.warning(
+                        "Schema %s migration failed using admin relation %s (%s)",
+                        key, relation.id, type(exc).__name__,
+                    )
+                    continue
+                logger.info("Schema %s migrated using admin relation %s", key, relation.id)
+                pending.remove(key)
+            if not pending:
+                break
+
+        if pending:
+            self.unit.status = BlockedStatus(
+                "schema migration incomplete for: " + ", ".join(sorted(pending))
+            )
+            return False
         self._state.is_initial_schema_ready = True
-        self._state.schema_workload_version = WORKLOAD_VERSION
-        self._publish_schema_status("ready", WORKLOAD_VERSION)
+        self._state.upgrade_schema_pending = False
+        self._publish_ready_to_admin_relations()
         self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
+        return True
+
+    def _publish_ready_to_admin_relations(self):
+        """Tell new and existing admin relations that the initialized schema is ready."""
+        for relation in self.model.relations.get("admin", []):
+            relation.data[self.app].update({"schema_status": "ready"})
 
     def _publish_schema_status(self, status, version=None):
         """Publish migration progress and the version proven ready to the server."""
