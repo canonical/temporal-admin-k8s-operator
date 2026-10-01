@@ -18,7 +18,7 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from state import State
 
 logger = logging.getLogger(__name__)
-WORKLOAD_VERSION = "1.23.1"
+WORKLOAD_VERSION = "1.26.3"
 SQL_TOOL = f"/bin/temporal-sql-tool-{WORKLOAD_VERSION}"
 SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
 
