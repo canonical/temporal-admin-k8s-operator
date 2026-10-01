@@ -57,7 +57,7 @@ def test_container_unavailable_revokes_readiness(context, upgrade_state, admin_r
         upgrade_state, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
     )
     result = context.run(context.on.upgrade_charm(), state)
-    assert result.get_relation(admin_relation.id).local_app_data == {"schema_status": "updating"}
+    assert result.get_relation(admin_relation.id).local_app_data == {"schema_status": "migrating"}
     assert result.deferred
 
 
@@ -80,3 +80,25 @@ def test_action_without_container_fails_without_deferring(context, upgrade_state
     )
     with pytest.raises(ops.testing.ActionFailed):
         context.run(context.on.action("setup-schema"), state)
+
+
+def test_pre_upgrade_check_reports_target_and_current_version(context, peer_relation, upgrade_state, admin_relation):
+    peer_relation.local_app_data["schema_workload_version"] = '"1.23.1"'
+    result = context.run(context.on.action("pre-upgrade-check"), upgrade_state)
+    assert not result.deferred
+    results = context.action_results
+    assert results["target-schema-version"] == WORKLOAD_VERSION
+    assert results["current-schema-version"] == "1.23.1"
+    assert results["database-connectivity"] == "ok"
+    assert results["backup-verified"] == "false"
+    assert "does not verify" in results["warning"]
+
+
+@pytest.mark.admin_relation_uninitialized
+def test_pre_upgrade_check_fails_without_database_connectivity(context, peer_relation, admin_relation, temporal_admin_container):
+    state = ops.testing.State(
+        leader=True, relations=[peer_relation, admin_relation], containers=[temporal_admin_container]
+    )
+    with pytest.raises(ops.testing.ActionFailed):
+        context.run(context.on.action("pre-upgrade-check"), state)
+    assert context.action_results["database-connectivity"] != "ok"

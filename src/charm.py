@@ -77,6 +77,7 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
+        self.framework.observe(self.on.pre_upgrade_check_action, self._on_pre_upgrade_check_action)
         self.framework.observe(self.on.update_status, self._on_temporal_admin_pebble_ready)
         self.framework.observe(self.on.leader_elected, self._on_temporal_admin_pebble_ready)
         # Handle temporal-host-info relation.
@@ -100,8 +101,14 @@ class TemporalAdminK8SCharm(CharmBase):
             event.defer()
             return
 
+        logger.warning(
+            "Starting schema migration to %s. This charm cannot verify that a database backup exists or "
+            "is restorable; operators must create and verify a full PostgreSQL backup via postgresql-k8s "
+            "before this refresh (run the pre-upgrade-check action to review observable prerequisites).",
+            WORKLOAD_VERSION,
+        )
         self._state.upgrade_schema_pending = True
-        self._publish_schema_status("updating")
+        self._publish_schema_status("migrating")
         self._setup_db_schemas(event)
 
     @property
@@ -213,6 +220,46 @@ class TemporalAdminK8SCharm(CharmBase):
         if not self._setup_db_schemas(event):
             event.fail("schema migration incomplete; inspect charm logs")
 
+    @log_event_handler
+    def _on_pre_upgrade_check_action(self, event):
+        """Validate upgrade prerequisites observable by this charm.
+
+        Reports the target schema version this charm would migrate to, the
+        version schemas were last migrated to, and whether at least one
+        admin relation currently reports database connectivity. This action
+        does NOT verify that a database backup exists or is restorable;
+        operators must create and verify a full PostgreSQL backup via the
+        postgresql-k8s charm's backup actions before proceeding.
+
+        Args:
+            event: The action event.
+        """
+        relations = self.model.relations.get("admin", [])
+        connected_ids = sorted(
+            relation.id
+            for relation in relations
+            if relation.app and relation.data[relation.app].get("database_connections")
+        )
+        current_version = self._state.schema_workload_version or "unset"
+        results = {
+            "target-schema-version": WORKLOAD_VERSION,
+            "current-schema-version": current_version,
+            "schema-ready-for-target": str(
+                current_version == WORKLOAD_VERSION and not self._state.upgrade_schema_pending
+            ).lower(),
+            "database-connectivity": "ok" if connected_ids else "no admin relation reports database connectivity",
+            "admin-relations-checked": ",".join(str(i) for i in connected_ids) or "none",
+            "backup-verified": "false",
+            "warning": (
+                "This action does not verify that a database backup exists or is restorable. "
+                "Create and verify a full PostgreSQL backup via 'juju run postgresql-k8s/leader "
+                "create-backup=full' before proceeding with the upgrade."
+            ),
+        }
+        event.set_results(results)
+        if not connected_ids:
+            event.fail("no admin relation reports database connectivity; cannot assess migration readiness")
+
     # flake8: noqa: C901
     def _setup_db_schemas(self, event):
         """Initialize and migrate the Temporal database schemas.
@@ -239,7 +286,7 @@ class TemporalAdminK8SCharm(CharmBase):
             return False
 
         self._state.upgrade_schema_pending = True
-        self._publish_schema_status("updating")
+        self._publish_schema_status("migrating")
         container = self.unit.get_container(self.name)
         if not container.can_connect():
             self.unit.status = MaintenanceStatus("waiting for schema migration container")
