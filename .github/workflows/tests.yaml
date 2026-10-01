@@ -99,6 +99,7 @@ jobs:
         with:
           name: juju-debug-logs-${{ matrix.test }}
           path: .logs/
+          include-hidden-files: true
           if-no-files-found: ignore
 
       - name: Get system state (if failure)
