@@ -10,7 +10,10 @@ import pytest
 import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
-TEMPORAL_CHANNEL = "1.24/edge"
+# These tests only exercise admin-side functionality; the server is deployed
+# as a relation dependency and does not need to be on the matching track.
+# Must be a published track for TEMPORAL_SERVER_APP_NAME or juju deploy fails.
+TEMPORAL_CHANNEL = "1.23/edge"
 TEMPORAL_LEGACY_CHANNEL = "latest/stable"
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 

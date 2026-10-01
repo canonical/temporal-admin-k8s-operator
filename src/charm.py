@@ -261,7 +261,7 @@ class TemporalAdminK8SCharm(CharmBase):
             event.fail("no admin relation reports database connectivity; cannot assess migration readiness")
 
     # flake8: noqa: C901
-    def _setup_db_schemas(self, event):
+    def _setup_db_schemas(self, event):  # pylint: disable=too-many-branches,too-many-statements
         """Initialize and migrate the Temporal database schemas.
 
         Iterate through the available admin relations and use their database
@@ -387,6 +387,7 @@ class TemporalAdminK8SCharm(CharmBase):
 
 def execute(container, command, *args):
     """Execute the given command in the given container.
+
     Log the output and any warnings.
     Args:
         container: Container to execute command in.

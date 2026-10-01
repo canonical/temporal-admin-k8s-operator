@@ -12,6 +12,10 @@ from pytest_operator.plugin import OpsTest
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 SERVER_APP_NAME = "temporal-k8s"
+# These tests only exercise admin-side functionality; the server is deployed
+# as a relation dependency and does not need to be on the matching track.
+# Must be a published track for SERVER_APP_NAME or juju deploy fails.
+SERVER_TARGET_CHANNEL = "1.23/edge"
 
 logger = logging.getLogger(__name__)
 

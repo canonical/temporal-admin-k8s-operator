@@ -95,7 +95,9 @@ def test_pre_upgrade_check_reports_target_and_current_version(context, peer_rela
 
 
 @pytest.mark.admin_relation_uninitialized
-def test_pre_upgrade_check_fails_without_database_connectivity(context, peer_relation, admin_relation, temporal_admin_container):
+def test_pre_upgrade_check_fails_without_database_connectivity(
+    context, peer_relation, admin_relation, temporal_admin_container
+):
     state = ops.testing.State(
         leader=True, relations=[peer_relation, admin_relation], containers=[temporal_admin_container]
     )

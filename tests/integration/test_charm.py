@@ -17,6 +17,7 @@ from helpers import (
     APP_NAME,
     METADATA,
     SERVER_APP_NAME,
+    SERVER_TARGET_CHANNEL,
     run_cli_action,
     run_setup_schema_action,
 )
@@ -38,7 +39,7 @@ async def deploy(ops_test: OpsTest, request: FixtureRequest):
     resources = {"temporal-admin-image": METADATA["resources"]["temporal-admin-image"]["upstream-source"]}
 
     # Deploy temporal server, temporal admin and postgresql charms
-    await ops_test.model.deploy(SERVER_APP_NAME, channel="1.24/edge", config={"num-history-shards": 1})
+    await ops_test.model.deploy(SERVER_APP_NAME, channel=SERVER_TARGET_CHANNEL, config={"num-history-shards": 1})
     await ops_test.model.deploy(charm, resources=resources, application_name=APP_NAME)
     await ops_test.model.deploy("postgresql-k8s", channel="14/stable", trust=True)
 
