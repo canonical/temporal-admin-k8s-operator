@@ -35,7 +35,7 @@ def test_missing_admin_relation(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
     assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
+        "admin:temporal relation: not available"
     )
 
 
@@ -44,7 +44,7 @@ def test_missing_admin_relation_data(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
     assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
+        "schema migration incomplete for: db, visibility"
     )
 
 

@@ -12,10 +12,9 @@ import logging
 
 from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
 from ops import main
-from ops.charm import CharmBase
+from ops.charm import ActionEvent, CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 
-from ops.pebble import ExecError
 from state import State
 
 logger = logging.getLogger(__name__)
@@ -78,7 +77,8 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
-        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
+        self.framework.observe(self.on.update_status, self._on_temporal_admin_pebble_ready)
+        self.framework.observe(self.on.leader_elected, self._on_temporal_admin_pebble_ready)
         # Handle temporal-host-info relation.
         self.host_info = TemporalHostInfoRequirer(self)
 
@@ -101,8 +101,7 @@ class TemporalAdminK8SCharm(CharmBase):
             return
 
         self._state.upgrade_schema_pending = True
-        for relation in self.model.relations.get("admin", []):
-            relation.data[self.app].update({"schema_status": "updating"})
+        self._publish_schema_status("updating")
         self._setup_db_schemas(event)
 
     @property
@@ -128,7 +127,10 @@ class TemporalAdminK8SCharm(CharmBase):
         """Initialize schemas after Pebble starts, or publish existing readiness."""
         if not self.unit.is_leader():
             return
-        if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
+        if not self._state.is_ready():
+            event.defer()
+            return
+        if self._state.schema_workload_version == WORKLOAD_VERSION and not self._state.upgrade_schema_pending:
             self._publish_ready_to_admin_relations()
             return
         self._setup_db_schemas(event)
@@ -143,7 +145,7 @@ class TemporalAdminK8SCharm(CharmBase):
             return
         if not event.app or not event.relation.data[event.app].get("database_connections"):
             return
-        if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
+        if self._state.schema_workload_version == WORKLOAD_VERSION and not self._state.upgrade_schema_pending:
             self._publish_ready_to_admin_relations()
             return
         self._setup_db_schemas(event)
@@ -202,6 +204,9 @@ class TemporalAdminK8SCharm(CharmBase):
     @log_event_handler
     def _on_setup_schema_action(self, event):
         """Run migrations explicitly with all available admin credentials."""
+        if not self.unit.is_leader():
+            event.fail("schema migration must run on the leader")
+            return
         if not self._state.is_ready():
             event.fail("peer relation unavailable")
             return
@@ -229,13 +234,18 @@ class TemporalAdminK8SCharm(CharmBase):
             migration could not be completed.
         """
         if not self.model.unit.is_leader() or not self._state.is_ready():
-            event.defer()
-            return
+            if not isinstance(event, ActionEvent):
+                event.defer()
+            return False
 
+        self._state.upgrade_schema_pending = True
+        self._publish_schema_status("updating")
         container = self.unit.get_container(self.name)
         if not container.can_connect():
-            event.defer()
-            return
+            self.unit.status = MaintenanceStatus("waiting for schema migration container")
+            if not isinstance(event, ActionEvent):
+                event.defer()
+            return False
 
         schema_dirs = {
             "db": f"{SCHEMA_ROOT}/temporal/versioned",
@@ -259,25 +269,39 @@ class TemporalAdminK8SCharm(CharmBase):
             except (TypeError, ValueError):
                 logger.warning("Invalid database_connections on admin relation %s", relation.id)
                 continue
-            for key in tuple(pending):
+            if not isinstance(connections, dict):
+                continue
+            for key in sorted(pending):
                 connection = connections.get(key)
                 if not connection:
                     continue
                 try:
                     args = [
-                        "--plugin", "postgres12", "--endpoint", connection["host"],
-                        "--port", str(connection["port"]), "--database", connection["dbname"],
-                        "--user", connection["user"], "--password", connection["password"],
+                        "--plugin",
+                        "postgres12",
+                        "--endpoint",
+                        connection["host"],
+                        "--port",
+                        str(connection["port"]),
+                        "--database",
+                        connection["dbname"],
+                        "--user",
+                        connection["user"],
+                        "--password",
+                        connection["password"],
                     ]
                     if connection.get("tls", False):
                         args[2:2] = ["--tls", "--tls-disable-host-verification"]
 
-                    execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0")
+                    if not self._state.is_initial_schema_ready:
+                        execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0")
                     execute(container, SQL_TOOL, *args, "update-schema", "-d", schema_dirs[key])
                 except Exception as exc:
                     logger.warning(
                         "Schema %s migration failed using admin relation %s (%s)",
-                        key, relation.id, type(exc).__name__,
+                        key,
+                        relation.id,
+                        type(exc).__name__,
                     )
                     continue
                 logger.info("Schema %s migrated using admin relation %s", key, relation.id)
@@ -286,10 +310,10 @@ class TemporalAdminK8SCharm(CharmBase):
                 break
 
         if pending:
-            self.unit.status = BlockedStatus(
-                "schema migration incomplete for: " + ", ".join(sorted(pending))
-            )
+            self._publish_schema_status("failed")
+            self.unit.status = BlockedStatus("schema migration incomplete for: " + ", ".join(sorted(pending)))
             return False
+        self._state.schema_workload_version = WORKLOAD_VERSION
         self._state.is_initial_schema_ready = True
         self._state.upgrade_schema_pending = False
         self._publish_ready_to_admin_relations()
@@ -299,8 +323,19 @@ class TemporalAdminK8SCharm(CharmBase):
 
     def _publish_ready_to_admin_relations(self):
         """Tell new and existing admin relations that the initialized schema is ready."""
+        self._publish_schema_status("ready")
+        self.unit.set_workload_version(WORKLOAD_VERSION)
+        self.unit.status = ActiveStatus()
+
+    def _publish_schema_status(self, status):
+        """Only advertise a workload version after both migrations succeed."""
         for relation in self.model.relations.get("admin", []):
-            relation.data[self.app].update({"schema_status": "ready"})
+            data = relation.data[self.app]
+            data["schema_status"] = status
+            if status == "ready":
+                data["schema_version"] = WORKLOAD_VERSION
+            else:
+                data.pop("schema_version", None)
 
 
 def execute(container, command, *args):
