@@ -12,11 +12,3 @@ cli:
 
 setup-schema:
   description: Initialize a new database or update existing Temporal schemas to this charm's version.
-
-pre-upgrade-check:
-  description: >-
-    Validate the upgrade prerequisites observable by this charm: database
-    connectivity over existing admin relations and the current vs. target
-    schema version. This action does NOT verify that a database backup
-    exists or is restorable; operators must create and verify a full
-    PostgreSQL backup via the postgresql-k8s charm before refreshing.
