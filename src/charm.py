@@ -77,7 +77,6 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
-        self.framework.observe(self.on.pre_upgrade_check_action, self._on_pre_upgrade_check_action)
         self.framework.observe(self.on.update_status, self._on_temporal_admin_pebble_ready)
         self.framework.observe(self.on.leader_elected, self._on_temporal_admin_pebble_ready)
         # Handle temporal-host-info relation.
@@ -104,11 +103,9 @@ class TemporalAdminK8SCharm(CharmBase):
         logger.warning(
             "Starting schema migration to %s. This charm cannot verify that a database backup exists or "
             "is restorable; operators must create and verify a full PostgreSQL backup via postgresql-k8s "
-            "before this refresh (run the pre-upgrade-check action to review observable prerequisites).",
+            "before this refresh.",
             WORKLOAD_VERSION,
         )
-        self._state.upgrade_schema_pending = True
-        self._publish_schema_status("migrating")
         self._setup_db_schemas(event)
 
     @property
@@ -137,8 +134,8 @@ class TemporalAdminK8SCharm(CharmBase):
         if not self._state.is_ready():
             event.defer()
             return
-        if self._state.schema_workload_version == WORKLOAD_VERSION and not self._state.upgrade_schema_pending:
-            self._publish_ready_to_admin_relations()
+        if self._state.schema_workload_version == WORKLOAD_VERSION:
+            self._notify_admin_relations_ready()
             return
         self._setup_db_schemas(event)
 
@@ -152,8 +149,8 @@ class TemporalAdminK8SCharm(CharmBase):
             return
         if not event.app or not event.relation.data[event.app].get("database_connections"):
             return
-        if self._state.schema_workload_version == WORKLOAD_VERSION and not self._state.upgrade_schema_pending:
-            self._publish_ready_to_admin_relations()
+        if self._state.schema_workload_version == WORKLOAD_VERSION:
+            self._notify_admin_relations_ready()
             return
         self._setup_db_schemas(event)
 
@@ -220,46 +217,6 @@ class TemporalAdminK8SCharm(CharmBase):
         if not self._setup_db_schemas(event):
             event.fail("schema migration incomplete; inspect charm logs")
 
-    @log_event_handler
-    def _on_pre_upgrade_check_action(self, event):
-        """Validate upgrade prerequisites observable by this charm.
-
-        Reports the target schema version this charm would migrate to, the
-        version schemas were last migrated to, and whether at least one
-        admin relation currently reports database connectivity. This action
-        does NOT verify that a database backup exists or is restorable;
-        operators must create and verify a full PostgreSQL backup via the
-        postgresql-k8s charm's backup actions before proceeding.
-
-        Args:
-            event: The action event.
-        """
-        relations = self.model.relations.get("admin", [])
-        connected_ids = sorted(
-            relation.id
-            for relation in relations
-            if relation.app and relation.data[relation.app].get("database_connections")
-        )
-        current_version = self._state.schema_workload_version or "unset"
-        results = {
-            "target-schema-version": WORKLOAD_VERSION,
-            "current-schema-version": current_version,
-            "schema-ready-for-target": str(
-                current_version == WORKLOAD_VERSION and not self._state.upgrade_schema_pending
-            ).lower(),
-            "database-connectivity": "ok" if connected_ids else "no admin relation reports database connectivity",
-            "admin-relations-checked": ",".join(str(i) for i in connected_ids) or "none",
-            "backup-verified": "false",
-            "warning": (
-                "This action does not verify that a database backup exists or is restorable. "
-                "Create and verify a full PostgreSQL backup via 'juju run postgresql-k8s/leader "
-                "create-backup=full' before proceeding with the upgrade."
-            ),
-        }
-        event.set_results(results)
-        if not connected_ids:
-            event.fail("no admin relation reports database connectivity; cannot assess migration readiness")
-
     # flake8: noqa: C901
     def _setup_db_schemas(self, event):  # pylint: disable=too-many-branches,too-many-statements
         """Initialize and migrate the Temporal database schemas.
@@ -285,8 +242,6 @@ class TemporalAdminK8SCharm(CharmBase):
                 event.defer()
             return False
 
-        self._state.upgrade_schema_pending = True
-        self._publish_schema_status("migrating")
         container = self.unit.get_container(self.name)
         if not container.can_connect():
             self.unit.status = MaintenanceStatus("waiting for schema migration container")
@@ -357,32 +312,19 @@ class TemporalAdminK8SCharm(CharmBase):
                 break
 
         if pending:
-            self._publish_schema_status("failed")
             self.unit.status = BlockedStatus("schema migration incomplete for: " + ", ".join(sorted(pending)))
             return False
         self._state.schema_workload_version = WORKLOAD_VERSION
         self._state.is_initial_schema_ready = True
-        self._state.upgrade_schema_pending = False
-        self._publish_ready_to_admin_relations()
-        self.unit.set_workload_version(WORKLOAD_VERSION)
-        self.unit.status = ActiveStatus()
+        self._notify_admin_relations_ready()
         return True
 
-    def _publish_ready_to_admin_relations(self):
-        """Tell new and existing admin relations that the initialized schema is ready."""
-        self._publish_schema_status("ready")
+    def _notify_admin_relations_ready(self):
+        """Tell admin relations the schema is ready; migrated_workload_version is not the SQL schema_version."""
+        for relation in self.model.relations.get("admin", []):
+            relation.data[self.app].update({"schema_status": "ready", "migrated_workload_version": WORKLOAD_VERSION})
         self.unit.set_workload_version(WORKLOAD_VERSION)
         self.unit.status = ActiveStatus()
-
-    def _publish_schema_status(self, status):
-        """Only advertise a workload version after both migrations succeed."""
-        for relation in self.model.relations.get("admin", []):
-            data = relation.data[self.app]
-            data["schema_status"] = status
-            if status == "ready":
-                data["schema_version"] = WORKLOAD_VERSION
-            else:
-                data.pop("schema_version", None)
 
 
 def execute(container, command, *args):

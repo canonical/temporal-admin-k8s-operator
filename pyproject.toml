@@ -10,6 +10,7 @@ requires-python = ">=3.10,<3.13"
 # Runtime deps (was requirements.txt)
 charm = [
     "ops==2.21.1",
+    "psycopg2-binary==2.9.9",
 ]
 
 # Unit test deps
@@ -18,6 +19,7 @@ unit = [
     "ipdb==0.13.9",
     "pytest==7.1.3",
     "ops[testing]==2.21.1",
+    "psycopg2-binary==2.9.9",
 ]
 
 # Integration test deps
