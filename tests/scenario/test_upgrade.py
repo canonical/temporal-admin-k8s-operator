@@ -35,7 +35,9 @@ def test_refresh_publishes_version_after_both_migrations(context, upgrade_state,
 
 
 @pytest.mark.parametrize("failed_call", [0, 1])
-def test_failed_migration_revokes_readiness_and_retries(context, upgrade_state, admin_relation, failed_call):
+def test_failed_migration_revokes_readiness_and_retries(
+    context, upgrade_state, admin_relation, temporal_admin_container, failed_call
+):
     outcomes = [None, None]
     outcomes[failed_call] = RuntimeError("migration interrupted")
     with patch("charm.execute", side_effect=outcomes):
@@ -45,13 +47,14 @@ def test_failed_migration_revokes_readiness_and_retries(context, upgrade_state, 
         "schema_status": "ready",
         "migrated_workload_version": "1.23.1",
     }
+    # update_status no longer retries migrations; pebble_ready resumes the pending upgrade instead.
     with patch("charm.execute") as sql:
-        result = context.run(context.on.update_status(), result)
+        result = context.run(context.on.pebble_ready(temporal_admin_container), result)
     assert result.unit_status == ops.ActiveStatus()
     assert sql.call_count == 2
     assert result.get_relation(admin_relation.id).local_app_data["migrated_workload_version"] == WORKLOAD_VERSION
     with patch("charm.execute") as sql:
-        context.run(context.on.update_status(), result)
+        context.run(context.on.pebble_ready(temporal_admin_container), result)
     sql.assert_not_called()
 
 
@@ -67,10 +70,23 @@ def test_container_unavailable_revokes_readiness(context, upgrade_state, admin_r
     assert result.deferred
 
 
-def test_pebble_ready_does_not_republish_old_version(context, upgrade_state, temporal_admin_container):
+def test_pebble_ready_resumes_pending_upgrade(context, peer_relation, admin_relation, temporal_admin_container):
+    peer_relation.local_app_data["is_initial_schema_ready"] = "true"
+    peer_relation.local_app_data["upgrade_schema_pending"] = "true"
+    admin_relation.local_app_data.update(schema_status="ready", migrated_workload_version="1.23.1")
+    state = ops.testing.State(
+        leader=True, relations=[peer_relation, admin_relation], containers=[temporal_admin_container]
+    )
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.pebble_ready(temporal_admin_container), state)
+    assert sql.call_count == 2
+    assert result.unit_status == ops.ActiveStatus()
+
+
+def test_pebble_ready_skips_migration_when_already_done(context, upgrade_state, temporal_admin_container):
     with patch("charm.execute") as sql:
         result = context.run(context.on.pebble_ready(temporal_admin_container), upgrade_state)
-    assert sql.call_count == 2
+    sql.assert_not_called()
     assert result.unit_status == ops.ActiveStatus()
 
 

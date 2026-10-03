@@ -10,11 +10,10 @@ import pytest
 import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
-# These tests only exercise admin-side functionality; the server is deployed
-# as a relation dependency and does not need to be on the matching track.
-# Must be a published track for TEMPORAL_SERVER_APP_NAME or juju deploy fails.
-TEMPORAL_CHANNEL = "1.23/edge"
-TEMPORAL_LEGACY_CHANNEL = "latest/stable"
+# The release users upgrade from: temporal-k8s and temporal-admin-k8s both publish
+# 1.23/stable on ubuntu@22.04 only.
+PREVIOUS_TRACK_CHANNEL = "1.23/stable"
+PREVIOUS_TRACK_BASE = "ubuntu@22.04"
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
@@ -38,10 +37,10 @@ def juju(request: pytest.FixtureRequest):
 def deploy_temporal_stack(
     juju: jubilant.Juju,
     postgresql_channel: str = POSTGRESQL_CHANNEL,
-    temporal_channel: str = TEMPORAL_CHANNEL,
-    temporal_admin_channel: str = TEMPORAL_CHANNEL,
+    temporal_channel: str = PREVIOUS_TRACK_CHANNEL,
+    temporal_admin_channel: str = PREVIOUS_TRACK_CHANNEL,
 ):
-    """Deploy temporal-admin-k8s from the latest track.
+    """Deploy the previous-release temporal stack (server, admin, postgresql).
 
     Args:
         juju: Juju object (jubilant)
@@ -70,14 +69,14 @@ def deploy_temporal_stack(
         config={
             "num-history-shards": 1,
         },
-        base="ubuntu@24.04",
+        base=PREVIOUS_TRACK_BASE,
     )
 
     juju.deploy(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
         channel=temporal_admin_channel,
-        base="ubuntu@22.04",
+        base=PREVIOUS_TRACK_BASE,
     )
 
     juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
@@ -89,9 +88,9 @@ def deploy_temporal_stack(
 
 
 @pytest.fixture(scope="module")
-def admin_tools_latest_track(juju: jubilant.Juju):
-    """Deploy temporal-admin-k8s from the latest track."""
-    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_LEGACY_CHANNEL)
+def admin_tools_previous_track(juju: jubilant.Juju):
+    """Deploy the previous (1.23/stable) stack."""
+    deploy_temporal_stack(juju)
 
     yield "temporal-admin-k8s"
 

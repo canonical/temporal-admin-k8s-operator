@@ -13,7 +13,7 @@ import logging
 from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
 from ops import main
 from ops.charm import ActionEvent, CharmBase
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 
 from state import State
 
@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.24.3"
 SQL_TOOL = f"/bin/temporal-sql-tool-{WORKLOAD_VERSION}"
 SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
+# update-schema can take a while against an already-populated DB; the default
+# 60s timeout on execute() is too tight for this specific call.
+SCHEMA_MIGRATION_TIMEOUT = 300
 
 
 def log_event_handler(method):
@@ -77,8 +80,6 @@ class TemporalAdminK8SCharm(CharmBase):
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
-        self.framework.observe(self.on.update_status, self._on_temporal_admin_pebble_ready)
-        self.framework.observe(self.on.leader_elected, self._on_temporal_admin_pebble_ready)
         # Handle temporal-host-info relation.
         self.host_info = TemporalHostInfoRequirer(self)
 
@@ -106,6 +107,7 @@ class TemporalAdminK8SCharm(CharmBase):
             "before this refresh.",
             WORKLOAD_VERSION,
         )
+        self._state.upgrade_schema_pending = True
         self._setup_db_schemas(event)
 
     @property
@@ -134,24 +136,18 @@ class TemporalAdminK8SCharm(CharmBase):
         if not self._state.is_ready():
             event.defer()
             return
-        if self._state.schema_workload_version == WORKLOAD_VERSION:
+        if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
             self._notify_admin_relations_ready()
             return
         self._setup_db_schemas(event)
 
     @log_event_handler
     def _on_admin_relation_changed(self, event):
-        """Migrate when credentials arrive and publish readiness on a new relation."""
-        if not self.unit.is_leader():
-            return
+        """Handle changes on the admin:temporal relation."""
         if not self._state.is_ready():
             event.defer()
             return
-        if not event.app or not event.relation.data[event.app].get("database_connections"):
-            return
-        if self._state.schema_workload_version == WORKLOAD_VERSION:
-            self._notify_admin_relations_ready()
-            return
+        self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         self._setup_db_schemas(event)
 
     @log_event_handler
@@ -237,7 +233,10 @@ class TemporalAdminK8SCharm(CharmBase):
             True if all required schemas were migrated successfully, False if
             migration could not be completed.
         """
-        if not self.model.unit.is_leader() or not self._state.is_ready():
+        if not self.model.unit.is_leader():
+            return False
+
+        if not self._state.is_ready():
             if not isinstance(event, ActionEvent):
                 event.defer()
             return False
@@ -296,8 +295,18 @@ class TemporalAdminK8SCharm(CharmBase):
                         args[2:2] = ["--tls", "--tls-disable-host-verification"]
 
                     if not self._state.is_initial_schema_ready:
-                        execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0")
-                    execute(container, SQL_TOOL, *args, "update-schema", "-d", schema_dirs[key])
+                        execute(
+                            container, SQL_TOOL, *args, "setup-schema", "-v", "0.0", timeout=SCHEMA_MIGRATION_TIMEOUT
+                        )
+                    execute(
+                        container,
+                        SQL_TOOL,
+                        *args,
+                        "update-schema",
+                        "-d",
+                        schema_dirs[key],
+                        timeout=SCHEMA_MIGRATION_TIMEOUT,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Schema %s migration failed using admin relation %s (%s)",
@@ -314,8 +323,8 @@ class TemporalAdminK8SCharm(CharmBase):
         if pending:
             self.unit.status = BlockedStatus("schema migration incomplete for: " + ", ".join(sorted(pending)))
             return False
-        self._state.schema_workload_version = WORKLOAD_VERSION
         self._state.is_initial_schema_ready = True
+        self._state.upgrade_schema_pending = False
         self._notify_admin_relations_ready()
         return True
 
@@ -327,7 +336,7 @@ class TemporalAdminK8SCharm(CharmBase):
         self.unit.status = ActiveStatus()
 
 
-def execute(container, command, *args):
+def execute(container, command, *args, timeout=60):
     """Execute the given command in the given container.
 
     Log the output and any warnings.
@@ -335,12 +344,13 @@ def execute(container, command, *args):
         container: Container to execute command in.
         command: Command to be executed.
         args: Additional arguments needed for command execution.
+        timeout: Seconds to wait for the command to complete.
 
     Returns:
         Output from executing the command.
     """
     cmd = [command] + list(args)
-    proc = container.exec(cmd, timeout=60)
+    proc = container.exec(cmd, timeout=timeout)
     output, warnings = proc.wait_output()
     for line in output.splitlines():
         logger.debug(f"{command}: {line.strip()}")
