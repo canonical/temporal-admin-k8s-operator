@@ -25,6 +25,8 @@ SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
 # update-schema can take a while against an already-populated DB; the default
 # 60s timeout on execute() is too tight for this specific call.
 SCHEMA_MIGRATION_TIMEOUT = 300
+# SQL tool stderr when the user lacks rights, e.g. "pq: must be owner of table executions_visibility".
+PERMISSION_ERRORS = ("pq: permission denied", "pq: must be owner")
 
 
 def _failure_detail(exc: Exception) -> str:
@@ -231,7 +233,7 @@ class TemporalAdminK8SCharm(CharmBase):
             event.fail(err)
 
     # flake8: noqa: C901
-    def _setup_db_schemas(self, event):  # pylint: disable=too-many-branches,too-many-statements
+    def _setup_db_schemas(self, event):  # pylint: disable=too-many-branches,too-many-statements,R0911
         """Initialize and migrate the Temporal database schemas.
 
         Iterate through the available admin relations and use their database
@@ -331,6 +333,13 @@ class TemporalAdminK8SCharm(CharmBase):
                         relation.id,
                         _failure_detail(exc),
                     )
+                    # Only a permission error makes another relation's user worth trying.
+                    if not any(e in (getattr(exc, "stderr", None) or "") for e in PERMISSION_ERRORS):
+                        self.unit.status = BlockedStatus(
+                            f"schema {key} migration failed (not a permission error); "
+                            "check the charm logs and then run the `setup-schema` action"
+                        )
+                        return False
                     continue
                 logger.info("Schema %s migrated using admin relation %s", key, relation.id)
                 pending.remove(key)
@@ -338,8 +347,10 @@ class TemporalAdminK8SCharm(CharmBase):
                 break
 
         if pending:
-            self.unit.status = BlockedStatus(f"schema migration incomplete for: {', '.join(sorted(pending))}; "
-                    "fix the admin relation credentials, then run the `setup-schema` action")
+            self.unit.status = BlockedStatus(
+                f"schema migration incomplete for: {', '.join(sorted(pending))}; no admin relation provides a "
+                "database user that owns the Temporal tables"
+            )
             return False
         self._state.is_initial_schema_ready = True
         self._state.upgrade_schema_pending = False

@@ -193,7 +193,7 @@ def _fake_execute(calls, errors):
 
 def test_failed_visibility_migration_retries_with_next_relation_user(context, peer_relation, temporal_admin_container):
     calls = []
-    errors = {("frontend", "visibility"): "ERROR: must be owner of table schema_version"}
+    errors = {("frontend", "visibility"): "error executing statement: pq: must be owner of table executions_visibility"}
     state = _two_relation_state(peer_relation, temporal_admin_container)
 
     with patch("charm.execute", side_effect=_fake_execute(calls, errors)):
@@ -203,3 +203,16 @@ def test_failed_visibility_migration_retries_with_next_relation_user(context, pe
     assert calls == [("frontend", "temporal"), ("frontend", "visibility"), ("matching", "visibility")]
     assert result.unit_status == ops.ActiveStatus()
     assert result.get_relation(10).local_app_data["migrated_workload_version"] == WORKLOAD_VERSION
+
+
+def test_unrelated_error_blocks_without_trying_next_relation_user(context, peer_relation, temporal_admin_container):
+    calls = []
+    errors = {("frontend", "visibility"): "dial tcp 10.0.0.1:6432: connect: connection refused"}
+    state = _two_relation_state(peer_relation, temporal_admin_container)
+
+    with patch("charm.execute", side_effect=_fake_execute(calls, errors)):
+        result = context.run(context.on.upgrade_charm(), state)
+
+    assert calls == [("frontend", "temporal"), ("frontend", "visibility")]
+    assert isinstance(result.unit_status, ops.BlockedStatus)
+    assert "not a permission error" in result.unit_status.message

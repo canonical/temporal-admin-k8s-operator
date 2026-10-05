@@ -41,9 +41,9 @@ def test_missing_admin_relation(context, state, temporal_admin_container):
 def test_missing_admin_relation_data(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "schema migration incomplete for: db, visibility; fix the admin relation credentials, then run the `setup-schema` action"
-    )
+    assert isinstance(state_out.unit_status, ops.BlockedStatus)
+    assert state_out.unit_status.message.startswith("schema migration incomplete for: db, visibility;")
+    assert "setup-schema" in state_out.unit_status.message
 
 
 def test_ready(context, state, temporal_admin_container):
