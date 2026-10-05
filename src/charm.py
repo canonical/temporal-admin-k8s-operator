@@ -203,15 +203,16 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_setup_schema_action(self, event):
-        """Run migrations explicitly with all available admin credentials."""
-        if not self.unit.is_leader():
-            event.fail("schema migration must run on the leader")
-            return
-        if not self._state.is_ready():
-            event.fail("peer relation unavailable")
-            return
-        if not self._setup_db_schemas(event):
-            event.fail("schema migration incomplete; inspect charm logs")
+        """Set up the database schemas.
+
+        Args:
+            event: The event triggered when the action is triggered.
+        """
+        try:
+            if not self._setup_db_schemas(event):
+                event.fail("schema migration incomplete; check unit status and charm logs")
+        except Exception as err:
+            event.fail(err)
 
     # flake8: noqa: C901
     def _setup_db_schemas(self, event):  # pylint: disable=too-many-branches,too-many-statements
