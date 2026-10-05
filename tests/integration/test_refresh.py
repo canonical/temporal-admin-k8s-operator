@@ -52,7 +52,7 @@ def test_refresh_from_1_23_to_current(juju: jubilant.Juju, admin_tools_previous_
         admin_tools_previous_track,
         path=charm_path,
         resources=charm_resources,
-        base="ubuntu@26.04",
+        base="ubuntu@24.04",
     )
     juju.wait(jubilant.all_active, error=jubilant.any_error)
 

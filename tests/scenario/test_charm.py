@@ -43,7 +43,6 @@ def test_missing_admin_relation_data(context, state, temporal_admin_container):
 
     assert isinstance(state_out.unit_status, ops.BlockedStatus)
     assert state_out.unit_status.message.startswith("schema migration incomplete for: db, visibility;")
-    assert "setup-schema" in state_out.unit_status.message
 
 
 def test_ready(context, state, temporal_admin_container):

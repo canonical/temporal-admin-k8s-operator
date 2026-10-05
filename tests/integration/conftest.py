@@ -4,6 +4,7 @@
 """Fixtures for jubilant tests."""
 
 import pathlib
+import subprocess  # nosec B404
 
 import jubilant
 import pytest
@@ -100,6 +101,10 @@ def charm_path() -> pathlib.Path:
     """Returns the absolute path of the locally built admin-tools-k8s charm."""
     charm_dir = pathlib.Path(__file__).parent.parent.parent
     charms = [p.absolute() for p in charm_dir.glob("*.charm")]
+    if not charms:
+        # ops_test.build_charm (other modules) moves the packed charm out of the project root.
+        subprocess.run(["charmcraft", "pack"], cwd=charm_dir, check=True)
+        charms = [p.absolute() for p in charm_dir.glob("*.charm")]
     assert charms, "*.charm not found in project root"
     assert len(charms) == 1, "More than one *.charm file found in project root, unsure which to use"
     return charms[0]
