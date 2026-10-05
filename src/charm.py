@@ -14,6 +14,7 @@ from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
 from ops import main
 from ops.charm import ActionEvent, CharmBase
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
+from ops.pebble import ExecError
 
 from state import State
 
@@ -24,6 +25,20 @@ SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
 # update-schema can take a while against an already-populated DB; the default
 # 60s timeout on execute() is too tight for this specific call.
 SCHEMA_MIGRATION_TIMEOUT = 300
+
+
+def _failure_detail(exc: Exception) -> str:
+    """Describe a failed command without the command line, which contains credentials.
+
+    Args:
+        exc: The exception raised while running the SQL tool.
+
+    Returns:
+        Exit code and the tail of stderr for an ExecError, otherwise the exception type.
+    """
+    if isinstance(exc, ExecError):
+        return f"exit code {exc.exit_code}: {(exc.stderr or '').strip()[-500:]}"
+    return type(exc).__name__
 
 
 def log_event_handler(method):
@@ -210,7 +225,8 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         try:
             if not self._setup_db_schemas(event):
-                event.fail("schema migration incomplete; check unit status and charm logs")
+                reason = self.unit.status.message or "run it on the leader unit once the peer relation is ready"
+                event.fail(f"schema migration incomplete: {reason}")
         except Exception as err:
             event.fail(err)
 
@@ -310,10 +326,10 @@ class TemporalAdminK8SCharm(CharmBase):
                     )
                 except Exception as exc:
                     logger.warning(
-                        "Schema %s migration failed using admin relation %s (%s)",
+                        "Schema %s migration failed using admin relation %s: %s",
                         key,
                         relation.id,
-                        type(exc).__name__,
+                        _failure_detail(exc),
                     )
                     continue
                 logger.info("Schema %s migrated using admin relation %s", key, relation.id)
@@ -322,7 +338,8 @@ class TemporalAdminK8SCharm(CharmBase):
                 break
 
         if pending:
-            self.unit.status = BlockedStatus("schema migration incomplete for: " + ", ".join(sorted(pending)))
+            self.unit.status = BlockedStatus(f"schema migration incomplete for: {', '.join(sorted(pending))}; "
+                    "fix the admin relation credentials, then run the `setup-schema` action")
             return False
         self._state.is_initial_schema_ready = True
         self._state.upgrade_schema_pending = False
@@ -351,7 +368,8 @@ def execute(container, command, *args, timeout=60):
         Output from executing the command.
     """
     cmd = [command] + list(args)
-    proc = container.exec(cmd, timeout=timeout)
+    # Passing stdin avoids ops' stdin websocket writer, whose finalizer logs "Exception ignored" noise.
+    proc = container.exec(cmd, timeout=timeout, stdin="")
     output, warnings = proc.wait_output()
     for line in output.splitlines():
         logger.debug(f"{command}: {line.strip()}")

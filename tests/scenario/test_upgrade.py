@@ -4,11 +4,13 @@
 """Exercise the schema readiness contract during refresh and recovery."""
 
 import dataclasses
+import json
 from unittest.mock import patch
 
 import ops
 import ops.testing
 import pytest
+from ops.pebble import ExecError
 
 from charm import WORKLOAD_VERSION
 
@@ -35,7 +37,7 @@ def test_refresh_publishes_version_after_both_migrations(context, upgrade_state,
 
 
 @pytest.mark.parametrize("failed_call", [0, 1])
-def test_failed_migration_revokes_readiness_and_retries(
+def test_failed_migration_keeps_old_version_and_resumes_on_pebble_ready(
     context, upgrade_state, admin_relation, temporal_admin_container, failed_call
 ):
     outcomes = [None, None]
@@ -58,7 +60,9 @@ def test_failed_migration_revokes_readiness_and_retries(
     sql.assert_not_called()
 
 
-def test_container_unavailable_revokes_readiness(context, upgrade_state, admin_relation, temporal_admin_container):
+def test_container_unavailable_defers_and_keeps_old_version(
+    context, upgrade_state, admin_relation, temporal_admin_container
+):
     state = dataclasses.replace(
         upgrade_state, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
     )
@@ -102,3 +106,100 @@ def test_action_without_container_fails_without_deferring(context, upgrade_state
     )
     with pytest.raises(ops.testing.ActionFailed):
         context.run(context.on.action("setup-schema"), state)
+
+
+def _admin_relation(relation_id, user_suffix):
+    """Build an admin relation whose db users are named after user_suffix.
+
+    Args:
+        relation_id: Relation id; relations are tried in ascending id order.
+        user_suffix: Prefix of the database user published for both schemas.
+
+    Returns:
+        The admin relation, still advertising the previous workload version.
+    """
+    connections = {
+        schema: {
+            "dbname": f"temporal-k8s_{schema}",
+            "host": "myhost",
+            "password": "inner-light",  # nosec B105
+            "port": "4247",
+            "user": f"{user_suffix}@{schema}",
+        }
+        for schema in ("db", "visibility")
+    }
+    return ops.testing.Relation(
+        "admin",
+        id=relation_id,
+        remote_app_data={"database_connections": json.dumps(connections)},
+        local_app_data={"schema_status": "ready", "migrated_workload_version": "1.23.1"},
+    )
+
+
+def _two_relation_state(peer_relation, temporal_admin_container):
+    """Build a leader state with two admin relations (frontend first, matching second).
+
+    Args:
+        peer_relation: The peer relation fixture.
+        temporal_admin_container: The workload container fixture.
+
+    Returns:
+        The state to run the charm with.
+    """
+    peer_relation.local_app_data["is_initial_schema_ready"] = "true"
+    return ops.testing.State(
+        leader=True,
+        relations=[peer_relation, _admin_relation(10, "frontend"), _admin_relation(11, "matching")],
+        containers=[temporal_admin_container],
+    )
+
+
+def _fake_execute(calls, errors):
+    """Record update-schema calls as (user, schema) and raise any error mapped to that pair.
+
+    Args:
+        calls: List the (user, schema) pairs are appended to.
+        errors: Maps a (user, schema) pair to the stderr its ExecError carries.
+
+    Returns:
+        A replacement for charm.execute.
+    """
+
+    def execute(container, command, *args, timeout=60):
+        """Stand in for charm.execute.
+
+        Args:
+            container: Ignored.
+            command: The command line's executable.
+            args: The command arguments; --user and -d identify the call.
+            timeout: Ignored.
+
+        Returns:
+            Empty command output.
+
+        Raises:
+            ExecError: If an error is mapped to this (user, schema) pair.
+        """
+        args = list(args)
+        user = args[args.index("--user") + 1].split("@")[0]
+        schema = args[args.index("-d") + 1].split("/")[-2]
+        calls.append((user, schema))
+        if (user, schema) in errors:
+            raise ExecError([command, "<redacted>"], 1, "", errors[(user, schema)])
+        return ""
+
+    return execute
+
+
+def test_failed_visibility_migration_retries_with_next_relation_user(context, peer_relation, temporal_admin_container):
+    calls = []
+    errors = {("frontend", "visibility"): "ERROR: must be owner of table schema_version"}
+    state = _two_relation_state(peer_relation, temporal_admin_container)
+
+    with patch("charm.execute", side_effect=_fake_execute(calls, errors)):
+        result = context.run(context.on.upgrade_charm(), state)
+
+    # db migrates with the first relation's user; visibility is retried with the second one's.
+    assert calls == [("frontend", "temporal"), ("frontend", "visibility"), ("matching", "visibility")]
+    assert result.unit_status == ops.ActiveStatus()
+    assert result.get_relation(10).local_app_data["migrated_workload_version"] == WORKLOAD_VERSION

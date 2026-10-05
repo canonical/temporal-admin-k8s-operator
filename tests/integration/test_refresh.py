@@ -6,7 +6,6 @@
 import json
 import pathlib
 import re
-import time
 
 import jubilant
 from conftest import TEMPORAL_SERVER_APP_NAME
@@ -58,12 +57,13 @@ def test_refresh_from_1_23_to_current(juju: jubilant.Juju, admin_tools_previous_
     juju.wait(jubilant.all_active, error=jubilant.any_error)
 
     expected_version = _workload_version()
-    data: dict = {}
-    for _ in range(60):
-        data = _published_admin_data(juju)
-        if data.get("migrated_workload_version") == expected_version:
-            break
-        time.sleep(5)
+    juju.wait(
+        lambda _: _published_admin_data(juju).get("migrated_workload_version") == expected_version,
+        error=jubilant.any_error,
+        delay=5,
+        timeout=300,
+    )
 
+    data = _published_admin_data(juju)
     assert data.get("schema_status") == "ready"
     assert data.get("migrated_workload_version") == expected_version
