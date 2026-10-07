@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 WORKLOAD_VERSION = "1.24.3"
 SQL_TOOL = f"/bin/temporal-sql-tool-{WORKLOAD_VERSION}"
 SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
-# update-schema can take a while against an already-populated DB; the default
-# 60s timeout on execute() is too tight for this specific call.
-SCHEMA_MIGRATION_TIMEOUT = 300
+# update-schema can take a long time on a large, already-populated DB and its duration can't be predicted;
+# the 60s default on execute() is far too tight, so allow 45 minutes.
+SCHEMA_MIGRATION_TIMEOUT = 45 * 60
 # SQL tool stderr when the user lacks rights, e.g. "pq: must be owner of table executions_visibility".
 PERMISSION_ERRORS = ("pq: permission denied", "pq: must be owner")
 # SQL tool stderr when the database cannot be reached at all (not for bad credentials), e.g.
@@ -183,6 +183,7 @@ class TemporalAdminK8SCharm(CharmBase):
             self.unit.status = BlockedStatus("peer relation unavailable")
             return
         if not self.model.relations.get("admin"):
+            self._state.is_initial_schema_ready = False
             self.unit.status = BlockedStatus("admin:temporal relation: not available")
 
     @log_event_handler
@@ -316,10 +317,7 @@ class TemporalAdminK8SCharm(CharmBase):
                     if connection.get("tls", False):
                         args[2:2] = ["--tls", "--tls-disable-host-verification"]
 
-                    if not self._state.is_initial_schema_ready:
-                        execute(
-                            container, SQL_TOOL, *args, "setup-schema", "-v", "0.0", timeout=SCHEMA_MIGRATION_TIMEOUT
-                        )
+                    execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0", timeout=SCHEMA_MIGRATION_TIMEOUT)
                     execute(
                         container,
                         SQL_TOOL,

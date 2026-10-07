@@ -32,15 +32,15 @@ def test_refresh_publishes_version_after_both_migrations(context, upgrade_state,
         "schema_status": "ready",
         "migrated_workload_version": WORKLOAD_VERSION,
     }
-    assert sql.call_count == 2
-    assert all("update-schema" in call.args for call in sql.call_args_list)
+    assert sql.call_count == 4
+    assert sum("update-schema" in call.args for call in sql.call_args_list) == 2
 
 
-@pytest.mark.parametrize("failed_call", [0, 1])
+@pytest.mark.parametrize("failed_call", range(4))
 def test_failed_migration_keeps_old_version_and_resumes_on_pebble_ready(
     context, upgrade_state, admin_relation, temporal_admin_container, failed_call
 ):
-    outcomes = [None, None]
+    outcomes = [None] * 4
     outcomes[failed_call] = RuntimeError("migration interrupted")
     with patch("charm.execute", side_effect=outcomes):
         result = context.run(context.on.upgrade_charm(), upgrade_state)
@@ -53,7 +53,7 @@ def test_failed_migration_keeps_old_version_and_resumes_on_pebble_ready(
     with patch("charm.execute") as sql:
         result = context.run(context.on.pebble_ready(temporal_admin_container), result)
     assert result.unit_status == ops.ActiveStatus()
-    assert sql.call_count == 2
+    assert sql.call_count == 4
     assert result.get_relation(admin_relation.id).local_app_data["migrated_workload_version"] == WORKLOAD_VERSION
     with patch("charm.execute") as sql:
         context.run(context.on.pebble_ready(temporal_admin_container), result)
@@ -83,7 +83,7 @@ def test_pebble_ready_resumes_pending_upgrade(context, peer_relation, admin_rela
     )
     with patch("charm.execute") as sql:
         result = context.run(context.on.pebble_ready(temporal_admin_container), state)
-    assert sql.call_count == 2
+    assert sql.call_count == 4
     assert result.unit_status == ops.ActiveStatus()
 
 
@@ -181,6 +181,8 @@ def _fake_execute(calls, errors):
             ExecError: If an error is mapped to this (user, schema) pair.
         """
         args = list(args)
+        if "setup-schema" in args:
+            return ""
         user = args[args.index("--user") + 1].split("@")[0]
         schema = args[args.index("-d") + 1].split("/")[-2]
         calls.append((user, schema))
@@ -260,3 +262,18 @@ def test_bad_credentials_block_instead_of_waiting(context, peer_relation, tempor
 
     assert isinstance(result.unit_status, ops.BlockedStatus)
     assert not result.deferred
+
+
+@pytest.mark.parametrize("event", ["relation_changed", "pebble_ready"])
+def test_readded_admin_relation_on_fresh_db_runs_setup_schema(
+    context, upgrade_state, admin_relation, peer_relation, temporal_admin_container, event
+):
+    removed = context.run(context.on.relation_broken(admin_relation), upgrade_state)
+    assert removed.get_relation(peer_relation.id).local_app_data["is_initial_schema_ready"] == "false"
+
+    trigger = getattr(context.on, event)(admin_relation if event == "relation_changed" else temporal_admin_container)
+    with patch("charm.execute") as sql:
+        result = context.run(trigger, removed)
+
+    assert sum("setup-schema" in call.args for call in sql.call_args_list) == 2
+    assert result.unit_status == ops.ActiveStatus()
