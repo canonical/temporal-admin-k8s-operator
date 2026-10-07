@@ -207,7 +207,7 @@ def test_failed_visibility_migration_retries_with_next_relation_user(context, pe
 
 def test_unrelated_error_blocks_without_trying_next_relation_user(context, peer_relation, temporal_admin_container):
     calls = []
-    errors = {("frontend", "visibility"): "dial tcp 10.0.0.1:6432: connect: connection refused"}
+    errors = {("frontend", "visibility"): 'Unable to update SQL schema. {"error": "pq: syntax error at or near"}'}
     state = _two_relation_state(peer_relation, temporal_admin_container)
 
     with patch("charm.execute", side_effect=_fake_execute(calls, errors)):
@@ -216,3 +216,47 @@ def test_unrelated_error_blocks_without_trying_next_relation_user(context, peer_
     assert calls == [("frontend", "temporal"), ("frontend", "visibility")]
     assert isinstance(result.unit_status, ops.BlockedStatus)
     assert "not a permission error" in result.unit_status.message
+
+
+UNREACHABLE_DB = 'Unable to connect to SQL database. {"error": "dial tcp 10.0.0.1:6432: connect: connection refused"}'
+BAD_PASSWORD = 'Unable to connect to SQL database. {"error": "pq: password authentication failed for user \\"u\\""}'
+
+
+def test_unreachable_database_waits_and_defers_without_trying_next_relation_user(
+    context, peer_relation, temporal_admin_container
+):
+    calls = []
+    errors = {("frontend", "temporal"): UNREACHABLE_DB}
+    state = _two_relation_state(peer_relation, temporal_admin_container)
+
+    with patch("charm.execute", side_effect=_fake_execute(calls, errors)):
+        result = context.run(context.on.upgrade_charm(), state)
+
+    assert calls == [("frontend", "temporal")]
+    assert isinstance(result.unit_status, ops.WaitingStatus)
+    assert result.deferred
+    assert result.get_relation(10).local_app_data["migrated_workload_version"] == "1.23.1"
+
+
+def test_deferred_migration_completes_once_database_is_back(context, peer_relation, temporal_admin_container):
+    state = _two_relation_state(peer_relation, temporal_admin_container)
+    with patch("charm.execute", side_effect=_fake_execute([], {("frontend", "temporal"): UNREACHABLE_DB})):
+        result = context.run(context.on.upgrade_charm(), state)
+    assert result.deferred
+
+    with patch("charm.execute", side_effect=_fake_execute([], {})):
+        result = context.run(context.on.update_status(), result)
+
+    assert result.unit_status == ops.ActiveStatus()
+    assert result.get_relation(10).local_app_data["migrated_workload_version"] == WORKLOAD_VERSION
+
+
+def test_bad_credentials_block_instead_of_waiting(context, peer_relation, temporal_admin_container):
+    state = _two_relation_state(peer_relation, temporal_admin_container)
+    errors = {("frontend", "temporal"): BAD_PASSWORD}
+
+    with patch("charm.execute", side_effect=_fake_execute([], errors)):
+        result = context.run(context.on.upgrade_charm(), state)
+
+    assert isinstance(result.unit_status, ops.BlockedStatus)
+    assert not result.deferred

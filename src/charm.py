@@ -27,6 +27,9 @@ SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
 SCHEMA_MIGRATION_TIMEOUT = 300
 # SQL tool stderr when the user lacks rights, e.g. "pq: must be owner of table executions_visibility".
 PERMISSION_ERRORS = ("pq: permission denied", "pq: must be owner")
+# SQL tool stderr when the database cannot be reached at all (not for bad credentials), e.g.
+# 'Unable to connect to SQL database. {"error": "dial tcp ...: connect: connection refused"}'.
+UNREACHABLE_DB_ERRORS = ("Unable to connect to SQL database", "dial tcp")
 
 
 def _failure_detail(exc: Exception) -> str:
@@ -333,6 +336,12 @@ class TemporalAdminK8SCharm(CharmBase):
                         relation.id,
                         _failure_detail(exc),
                     )
+                    # Nothing ran against an unreachable database, so wait and retry on the next hook.
+                    if all(e in (getattr(exc, "stderr", None) or "") for e in UNREACHABLE_DB_ERRORS):
+                        self.unit.status = WaitingStatus("waiting for the database to be reachable")
+                        if not isinstance(event, ActionEvent):
+                            event.defer()
+                        return False
                     # Only a permission error makes another relation's user worth trying.
                     if not any(e in (getattr(exc, "stderr", None) or "") for e in PERMISSION_ERRORS):
                         self.unit.status = BlockedStatus(
