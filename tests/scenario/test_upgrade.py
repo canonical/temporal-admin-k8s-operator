@@ -87,9 +87,12 @@ def test_pebble_ready_resumes_pending_upgrade(context, peer_relation, admin_rela
     assert result.unit_status == ops.ActiveStatus()
 
 
-def test_pebble_ready_skips_migration_when_already_done(context, upgrade_state, temporal_admin_container):
+@pytest.mark.parametrize("leader", [True, False])
+def test_pebble_ready_skips_migration_when_already_done(context, upgrade_state, temporal_admin_container, leader):
     with patch("charm.execute") as sql:
-        result = context.run(context.on.pebble_ready(temporal_admin_container), upgrade_state)
+        result = context.run(
+            context.on.pebble_ready(temporal_admin_container), dataclasses.replace(upgrade_state, leader=leader)
+        )
     sql.assert_not_called()
     assert result.unit_status == ops.ActiveStatus()
 

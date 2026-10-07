@@ -150,14 +150,16 @@ class TemporalAdminK8SCharm(CharmBase):
 
     @log_event_handler
     def _on_temporal_admin_pebble_ready(self, event):
-        """Initialize schemas after Pebble starts, or publish existing readiness."""
-        if not self.unit.is_leader():
-            return
+        """Handle workload being ready.
+
+        Args:
+            event: The event triggered when the workload container is ready.
+        """
         if not self._state.is_ready():
             event.defer()
             return
         if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
-            self._notify_admin_relations_ready()
+            self.unit.status = ActiveStatus()
             return
         self._setup_db_schemas(event)
 
@@ -329,9 +331,9 @@ class TemporalAdminK8SCharm(CharmBase):
                     )
                 except Exception as exc:
                     logger.warning(
-                        "Schema %s migration failed using admin relation %s: %s",
+                        "Schema %s migration failed using database user %s: %s",
                         key,
-                        relation.id,
+                        connection.get("user"),
                         _failure_detail(exc),
                     )
                     # Nothing ran against an unreachable database, so wait and retry on the next hook.
@@ -348,7 +350,7 @@ class TemporalAdminK8SCharm(CharmBase):
                         )
                         return False
                     continue
-                logger.info("Schema %s migrated using admin relation %s", key, relation.id)
+                logger.info("Schema %s migrated using database user %s", key, connection["user"])
                 pending.remove(key)
             if not pending:
                 break
