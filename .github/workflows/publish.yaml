@@ -1,9 +1,8 @@
-name: CI
+name: Publish Charm
 
 on:
   push:
     branches:
-      - main
       - track/**
 
 jobs:
