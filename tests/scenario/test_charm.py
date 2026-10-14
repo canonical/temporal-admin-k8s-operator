@@ -109,13 +109,15 @@ def test_cli_action_plaintext_frontend(context, state, temporal_admin_container,
 
     command = _run_cli(context, state)
 
-    assert command == ["temporal", "--address", f"{FRONTEND_HOST}:7233", "operator", "cluster", "health"]
+    assert command == ["temporal", f"--address={FRONTEND_HOST}:7233", "operator", "cluster", "health"]
     assert context.action_results["output"] == "SERVING"
 
 
 def test_cli_action_tls_frontend_with_ca(context, state, temporal_admin_container, tmp_path):
     # A TLS frontend is dialled over TLS and verified against the CA from the
     # certificates provider, which is pushed into the container for the run.
+    # Each flag is a single token: `--tls --tls-ca-path <path>` before the
+    # subcommand makes the CLI fail with "unknown flag: --address".
     ca_relation = ops.testing.Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([CA_1])})
     state = _cli_state(
         state,
@@ -129,11 +131,9 @@ def test_cli_action_tls_frontend_with_ca(context, state, temporal_admin_containe
 
     assert command == [
         "temporal",
-        "--address",
-        f"{FRONTEND_HOST}:7233",
-        "--tls",
-        "--tls-ca-path",
-        CA_PATH,
+        f"--address={FRONTEND_HOST}:7233",
+        "--tls=true",
+        f"--tls-ca-path={CA_PATH}",
         "operator",
         "cluster",
         "health",

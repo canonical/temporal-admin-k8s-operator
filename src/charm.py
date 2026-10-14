@@ -173,7 +173,12 @@ class TemporalAdminK8SCharm(CharmBase):
         else:
             event.fail("temporal-host-info relation not established")
             return
-        args = ["--address", f"{server_name}:{server_port}"]
+        # Client flags go before the user's subcommand, so each must be a single
+        # `--flag=value` token: the CLI only knows them on its subcommands, and
+        # while looking for the subcommand it treats an unknown flag as taking
+        # the next token as its value. `--tls --tls-ca-path <path>` would then
+        # leave `<path>` looking like the subcommand.
+        args = [f"--address={server_name}:{server_port}"]
 
         if self.host_info.tls:
             # The frontend serves gRPC over TLS: dial it over TLS and verify it
@@ -184,7 +189,7 @@ class TemporalAdminK8SCharm(CharmBase):
                 event.fail(f"Temporal frontend uses TLS: integrate {RECEIVE_CA_CERT_RELATION_NAME} with its CA")
                 return
             container.push(CA_CERT_PATH, ca_bundle, make_dirs=True)
-            args.extend(["--tls", "--tls-ca-path", CA_CERT_PATH])
+            args.extend(["--tls=true", f"--tls-ca-path={CA_CERT_PATH}"])
 
         args.extend(event.params["args"].split())
         try:
