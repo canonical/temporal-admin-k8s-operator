@@ -1,7 +1,7 @@
 # Copyright 2023 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Test to ensure successful refreshes from the 1.23/stable track to the local (1.24) build."""
+"""Test to ensure successful refreshes from the 1.28/edge track to the local (1.29) build."""
 
 import json
 import pathlib
@@ -41,12 +41,11 @@ def _published_admin_data(juju: jubilant.Juju) -> dict:
     return {}
 
 
-def test_refresh_from_1_23_to_current(juju: jubilant.Juju, admin_tools_previous_track, charm_path, charm_resources):
-    """Refresh temporal-admin-k8s from 1.23/stable to the locally built charm.
+def test_refresh_from_1_28_to_current(juju: jubilant.Juju, admin_tools_previous_track, charm_path, charm_resources):
+    """Refresh temporal-admin-k8s from 1.28/edge to the locally built charm.
 
-    The stable server has no temporal-host-info relation, so the outcome checked
-    is the schema migration: admin must go active and publish readiness for this
-    charm's workload version.
+    The outcome checked is the schema migration: admin must go active and
+    publish readiness for this charm's workload version.
     """
     juju.refresh(
         admin_tools_previous_track,

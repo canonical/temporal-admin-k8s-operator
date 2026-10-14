@@ -11,10 +11,10 @@ import pytest
 import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
-# The release users upgrade from: temporal-k8s and temporal-admin-k8s both publish
-# 1.23/stable on ubuntu@22.04 only.
-PREVIOUS_TRACK_CHANNEL = "1.23/stable"
-PREVIOUS_TRACK_BASE = "ubuntu@22.04"
+SERVER_CHANNEL = "1.28/edge"
+SERVER_BASE = "ubuntu@24.04"
+PREVIOUS_ADMIN_CHANNEL = "1.28/edge"
+PREVIOUS_ADMIN_BASE = "ubuntu@24.04"
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
@@ -38,8 +38,8 @@ def juju(request: pytest.FixtureRequest):
 def deploy_temporal_stack(
     juju: jubilant.Juju,
     postgresql_channel: str = POSTGRESQL_CHANNEL,
-    temporal_channel: str = PREVIOUS_TRACK_CHANNEL,
-    temporal_admin_channel: str = PREVIOUS_TRACK_CHANNEL,
+    temporal_channel: str = SERVER_CHANNEL,
+    temporal_admin_channel: str = PREVIOUS_ADMIN_CHANNEL,
 ):
     """Deploy the previous-release temporal stack (server, admin, postgresql).
 
@@ -70,14 +70,14 @@ def deploy_temporal_stack(
         config={
             "num-history-shards": 1,
         },
-        base=PREVIOUS_TRACK_BASE,
+        base=SERVER_BASE,
     )
 
     juju.deploy(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
         channel=temporal_admin_channel,
-        base=PREVIOUS_TRACK_BASE,
+        base=PREVIOUS_ADMIN_BASE,
     )
 
     juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
@@ -90,7 +90,7 @@ def deploy_temporal_stack(
 
 @pytest.fixture(scope="module")
 def admin_tools_previous_track(juju: jubilant.Juju):
-    """Deploy the previous (1.23/stable) stack."""
+    """Deploy the previous-release stack (admin on the previous track)."""
     deploy_temporal_stack(juju)
 
     yield "temporal-admin-k8s"
