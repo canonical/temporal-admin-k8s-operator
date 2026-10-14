@@ -28,6 +28,21 @@ for usage instructions.
 
 `temporal-host-info` relation is the only source of Temporal server address.
 
+### Frontend TLS
+
+When the Temporal server's frontend serves gRPC over TLS (its `frontend-certificates`
+relation is integrated), the server tells this charm over `temporal-host-info`, and the
+`cli` action dials the frontend over TLS. To verify the frontend's certificate, the
+charm needs the CA that issued it. Integrate `receive-ca-cert` with the same
+certificates provider that issues the frontend certificate:
+
+```bash
+juju integrate temporal-admin-k8s:receive-ca-cert self-signed-certificates:send-ca-cert
+```
+
+Until the CA is available, the `cli` action fails with a message saying so. Without
+frontend TLS, the relation isn't needed and the CLI dials the frontend in plaintext.
+
 ## Contributing
 
 This charm is still in active development. Please see the

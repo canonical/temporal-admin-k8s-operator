@@ -17,6 +17,7 @@ from conftest import POSTGRESQL_CHANNEL, TEMPORAL_CHANNEL
 from helpers import (
     APP_NAME,
     SERVER_APP_NAME,
+    host_info_app_data,
     run_cli_action,
     run_setup_schema_action,
     unit_workload_status,
@@ -24,6 +25,8 @@ from helpers import (
 from jubilant import TaskError
 
 logger = logging.getLogger(__name__)
+
+SELF_SIGNED_CERTIFICATES_CHANNEL = "1/stable"
 
 
 @pytest.fixture(name="deploy", scope="module")
@@ -75,6 +78,29 @@ class TestDeployment:
     def test_setup_schema_action(self, juju: jubilant.Juju):
         """Is it possible to run setup schema via the action."""
         run_setup_schema_action(juju)
+
+    def test_tls_frontend(self, juju: jubilant.Juju):
+        """Test the cli action reaches a TLS frontend once it has the frontend's CA.
+
+        With frontend certificates related, a CLI that dials plaintext fails
+        (canonical/temporal-k8s-operator#152). This needs a temporal-k8s that
+        publishes the frontend port and its TLS state over temporal-host-info,
+        so it fails until that release is on TEMPORAL_CHANNEL.
+        """
+        juju.deploy("self-signed-certificates", channel=SELF_SIGNED_CERTIFICATES_CHANNEL)
+        juju.integrate(f"{SERVER_APP_NAME}:frontend-certificates", "self-signed-certificates:certificates")
+        juju.wait(lambda status: host_info_app_data(juju).get("tls") == "true", timeout=900)
+
+        # Without the CA the frontend can't be verified, so the action fails
+        # with an actionable message.
+        with pytest.raises(TaskError) as exc_info:
+            juju.run(f"{APP_NAME}/0", "cli", {"args": "operator cluster health"}, wait=600)
+        assert "integrate receive-ca-cert" in exc_info.value.task.message
+
+        juju.integrate(f"{APP_NAME}:receive-ca-cert", "self-signed-certificates:send-ca-cert")
+        juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=600)
+
+        run_cli_action(juju, namespace="tls")
 
     def test_openfga_relation(self, juju: jubilant.Juju):
         """Add OpenFGA relation and authorization model."""

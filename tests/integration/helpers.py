@@ -3,6 +3,7 @@
 
 """Temporal admin charm integration test helpers."""
 
+import json
 import logging
 from pathlib import Path
 
@@ -64,3 +65,23 @@ def run_setup_schema_action(juju: jubilant.Juju) -> None:
     juju.wait(lambda status: jubilant.all_active(status, APP_NAME), timeout=600)
 
     assert unit_workload_status(juju, APP_NAME) == "active"
+
+
+def host_info_app_data(juju: jubilant.Juju) -> dict:
+    """Return what the temporal-host-info provider publishes to the admin charm.
+
+    Args:
+        juju: Jubilant Juju client.
+
+    Returns:
+        The provider's application databag on the temporal-host-info relation.
+
+    Raises:
+        AssertionError: if the admin unit has no temporal-host-info relation.
+    """
+    unit = f"{APP_NAME}/0"
+    show_unit = json.loads(juju.cli("show-unit", unit, "--format", "json"))
+    for relation in show_unit[unit]["relation-info"]:
+        if relation["endpoint"] == "temporal-host-info":
+            return relation["application-data"]
+    raise AssertionError(f"{unit} has no temporal-host-info relation")

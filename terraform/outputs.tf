@@ -11,5 +11,6 @@ output "provides" {
 output "requires" {
   value = {
     temporal_host_info = "temporal-host-info"
+    receive_ca_cert    = "receive-ca-cert"
   }
 }
