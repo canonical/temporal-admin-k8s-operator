@@ -27,6 +27,9 @@ from jubilant import TaskError
 logger = logging.getLogger(__name__)
 
 SELF_SIGNED_CERTIFICATES_CHANNEL = "1/stable"
+# TEMPORAL_CHANNEL carries revisions for more than one base, and without a base
+# Juju picks the older one. Pin the base the current revisions are built for.
+TEMPORAL_BASE = "ubuntu@26.04"
 
 
 @pytest.fixture(name="deploy", scope="module")
@@ -45,6 +48,7 @@ def deploy(juju: jubilant.Juju, charm_path, charm_resources):
         SERVER_APP_NAME,
         app=SERVER_APP_NAME,
         channel=TEMPORAL_CHANNEL,
+        base=TEMPORAL_BASE,
         config={"num-history-shards": 1},
     )
     juju.deploy(
