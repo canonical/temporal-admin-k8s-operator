@@ -53,7 +53,7 @@ def test_refresh_from_1_25_to_current(juju: jubilant.Juju, admin_tools_previous_
         resources=charm_resources,
         base="ubuntu@24.04",
     )
-    juju.wait(jubilant.all_active, error=jubilant.any_error)
+    juju.wait(lambda status: jubilant.all_active(status, "temporal-admin-k8s"), error=jubilant.any_error)
 
     expected_version = _workload_version()
     juju.wait(
