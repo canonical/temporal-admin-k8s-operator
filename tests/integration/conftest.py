@@ -11,7 +11,6 @@ import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
 TEMPORAL_CHANNEL = "1.23/edge"
-TEMPORAL_LEGACY_CHANNEL = "latest/stable"
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
@@ -83,14 +82,6 @@ def deploy_temporal_stack(
     juju.integrate("temporal-k8s:admin", "temporal-admin-k8s:admin")
 
     juju.wait(jubilant.all_active)
-
-
-@pytest.fixture(scope="module")
-def admin_tools_latest_track(juju: jubilant.Juju):
-    """Deploy temporal-admin-k8s from the latest track."""
-    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_LEGACY_CHANNEL)
-
-    yield "temporal-admin-k8s"
 
 
 @pytest.fixture(scope="module")
