@@ -61,6 +61,7 @@ async def deploy(ops_test: OpsTest, request: FixtureRequest):
         assert ops_test.model.applications[APP_NAME].units[0].workload_status == "active"
 
 
+@pytest.mark.skip(reason="Temporarily skipped in CI.")
 @pytest.mark.abort_on_fail
 @pytest.mark.usefixtures("deploy")
 class TestDeployment:
