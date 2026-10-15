@@ -4,6 +4,7 @@
 """Fixtures for jubilant tests."""
 
 import pathlib
+import subprocess
 
 import jubilant
 import pytest
@@ -86,13 +87,20 @@ def deploy_temporal_stack(
 
 @pytest.fixture(scope="module")
 def charm_path(request: pytest.FixtureRequest) -> pathlib.Path:
-    """Returns the absolute path of the locally built admin-tools-k8s charm."""
+    """Returns the absolute path of the locally built admin-tools-k8s charm.
+
+    Uses --charm-file if given, otherwise the *.charm in the project root,
+    packing the charm first if there is none.
+    """
     charm_files = request.config.getoption("--charm-file")
     if charm_files:
         return pathlib.Path(charm_files[0]).absolute()
 
     charm_dir = pathlib.Path(__file__).parent.parent.parent
     charms = [p.absolute() for p in charm_dir.glob("*.charm")]
+    if not charms:
+        subprocess.run(["charmcraft", "pack", "--verbose"], cwd=charm_dir, check=True)
+        charms = [p.absolute() for p in charm_dir.glob("*.charm")]
     assert charms, "*.charm not found in project root"
     assert len(charms) == 1, "More than one *.charm file found in project root, unsure which to use"
     return charms[0]
