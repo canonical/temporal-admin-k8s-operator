@@ -26,7 +26,7 @@ def juju(request: pytest.FixtureRequest):
     keep_models = bool(request.config.getoption("--keep-models"))
 
     with jubilant.temp_model(keep=keep_models) as model:
-        model.wait_timeout = 10 * 60
+        model.wait_timeout = 30 * 60
 
         yield model
 
@@ -70,6 +70,8 @@ def deploy_temporal_stack(
         config={
             "num-history-shards": 1,
         },
+        # The Charmhub registry copy of the ~830MB image pulls far slower than ghcr.io.
+        resources={"temporal-server-image": UPSTREAM_IMAGE_SOURCE},
         base=SERVER_BASE,
     )
 
@@ -77,6 +79,7 @@ def deploy_temporal_stack(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
         channel=temporal_admin_channel,
+        resources={"temporal-admin-image": UPSTREAM_IMAGE_SOURCE},
         base=PREVIOUS_ADMIN_BASE,
     )
 
