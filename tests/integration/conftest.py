@@ -4,6 +4,7 @@
 """Fixtures for jubilant tests."""
 
 import pathlib
+import subprocess
 
 import jubilant
 import pytest
@@ -11,7 +12,6 @@ import yaml
 
 POSTGRESQL_CHANNEL = "14/stable"
 TEMPORAL_CHANNEL = "1.23/edge"
-TEMPORAL_LEGACY_CHANNEL = "latest/stable"
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
@@ -86,18 +86,21 @@ def deploy_temporal_stack(
 
 
 @pytest.fixture(scope="module")
-def admin_tools_latest_track(juju: jubilant.Juju):
-    """Deploy temporal-admin-k8s from the latest track."""
-    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_LEGACY_CHANNEL)
+def charm_path(request: pytest.FixtureRequest) -> pathlib.Path:
+    """Returns the absolute path of the locally built admin-tools-k8s charm.
 
-    yield "temporal-admin-k8s"
+    Uses --charm-file if given, otherwise the *.charm in the project root,
+    packing the charm first if there is none.
+    """
+    charm_files = request.config.getoption("--charm-file")
+    if charm_files:
+        return pathlib.Path(charm_files[0]).absolute()
 
-
-@pytest.fixture(scope="module")
-def charm_path() -> pathlib.Path:
-    """Returns the absolute path of the locally built admin-tools-k8s charm."""
     charm_dir = pathlib.Path(__file__).parent.parent.parent
     charms = [p.absolute() for p in charm_dir.glob("*.charm")]
+    if not charms:
+        subprocess.run(["charmcraft", "pack", "--verbose"], cwd=charm_dir, check=True)
+        charms = [p.absolute() for p in charm_dir.glob("*.charm")]
     assert charms, "*.charm not found in project root"
     assert len(charms) == 1, "More than one *.charm file found in project root, unsure which to use"
     return charms[0]
