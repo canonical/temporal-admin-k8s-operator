@@ -10,6 +10,9 @@ import functools
 import json
 import logging
 
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
 from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
 from ops import main
 from ops.charm import ActionEvent, CharmBase
@@ -19,6 +22,8 @@ from ops.pebble import ExecError
 from state import State
 
 logger = logging.getLogger(__name__)
+RECEIVE_CA_CERT_RELATION_NAME = "receive-ca-cert"
+CA_CERT_PATH = "/etc/temporal/certs/frontend-ca.pem"
 WORKLOAD_VERSION = "1.31.2"
 SQL_TOOL = "temporal-sql-tool"
 SCHEMA_ROOT = "/etc/temporal/schema/postgresql/v12"
@@ -102,6 +107,17 @@ class TemporalAdminK8SCharm(CharmBase):
         self.framework.observe(self.on.setup_schema_action, self._on_setup_schema_action)
         # Handle temporal-host-info relation.
         self.host_info = TemporalHostInfoRequirer(self)
+
+        # The CA that issued the frontend certificate, used to verify the
+        # frontend when it serves gRPC over TLS. It comes straight from the
+        # certificates provider, not from the Temporal server charm. It is read
+        # when an action runs, so no events need observing here.
+        self.ca_transfer = CertificateTransferRequires(self, RECEIVE_CA_CERT_RELATION_NAME)
+
+    @property
+    def _ca_bundle(self) -> str:
+        """Return the CA bundle received over certificate_transfer, or an empty string."""
+        return "\n".join(sorted(cert.strip() for cert in self.ca_transfer.get_all_certificates()))
 
     @log_event_handler
     def _on_upgrade_charm(self, event):
@@ -198,7 +214,25 @@ class TemporalAdminK8SCharm(CharmBase):
         else:
             event.fail("temporal-host-info relation not established")
             return
-        args = ["--address", f"{server_name}:{server_port}", *event.params["args"].split()]
+        # Client flags go before the user's subcommand, so each must be a single
+        # `--flag=value` token: the CLI only knows them on its subcommands, and
+        # while looking for the subcommand it treats an unknown flag as taking
+        # the next token as its value. `--tls --tls-ca-path <path>` would then
+        # leave `<path>` looking like the subcommand.
+        args = [f"--address={server_name}:{server_port}"]
+
+        if self.host_info.tls:
+            # The frontend serves gRPC over TLS: dial it over TLS and verify it
+            # against the CA from the certificates provider. The CA is pushed on
+            # every run so a rotated CA is always picked up.
+            ca_bundle = self._ca_bundle
+            if not ca_bundle:
+                event.fail(f"Temporal frontend uses TLS: integrate {RECEIVE_CA_CERT_RELATION_NAME} with its CA")
+                return
+            container.push(CA_CERT_PATH, ca_bundle, make_dirs=True)
+            args.extend(["--tls=true", f"--tls-ca-path={CA_CERT_PATH}"])
+
+        args.extend(event.params["args"].split())
         try:
             output = execute(container, "temporal", *args)
         except Exception as err:
