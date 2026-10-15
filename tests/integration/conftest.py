@@ -85,8 +85,12 @@ def deploy_temporal_stack(
 
 
 @pytest.fixture(scope="module")
-def charm_path() -> pathlib.Path:
+def charm_path(request: pytest.FixtureRequest) -> pathlib.Path:
     """Returns the absolute path of the locally built admin-tools-k8s charm."""
+    charm_files = request.config.getoption("--charm-file")
+    if charm_files:
+        return pathlib.Path(charm_files[0]).absolute()
+
     charm_dir = pathlib.Path(__file__).parent.parent.parent
     charms = [p.absolute() for p in charm_dir.glob("*.charm")]
     assert charms, "*.charm not found in project root"
