@@ -9,10 +9,14 @@ from conftest import POSTGRESQL_CHANNEL, TEMPORAL_CHANNEL, TEMPORAL_SERVER_APP_N
 
 ADMIN_APP_NAME = "temporal-admin-k8s"
 
-# The latest/ track was closed on Charmhub, so latest/stable can no longer be resolved.
-# Revision 13 was the last one released to latest/stable and remains downloadable by revision.
-TEMPORAL_ADMIN_LEGACY_CHANNEL = "latest/stable"
+# The latest/ track was closed on Charmhub. Revision 13 was the last one released to
+# latest/stable and is still downloadable by revision, but Juju resolves store resources
+# through the deploy channel, which fails for a closed channel. So we deploy it through an
+# open channel (only used for that lookup, the pinned revision is what gets installed) and
+# pass rev 13's original image as an upload so the channel's resource is not used.
+TEMPORAL_ADMIN_LEGACY_CHANNEL = "1.23/stable"
 TEMPORAL_ADMIN_LEGACY_REVISION = 13
+TEMPORAL_ADMIN_LEGACY_RESOURCES = {"temporal-admin-image": "temporalio/admin-tools:1.23.1.0"}
 
 
 @pytest.fixture(scope="module")
@@ -47,6 +51,7 @@ def admin_tools_latest_track(juju: jubilant.Juju):
         app=ADMIN_APP_NAME,
         channel=TEMPORAL_ADMIN_LEGACY_CHANNEL,
         revision=TEMPORAL_ADMIN_LEGACY_REVISION,
+        resources=TEMPORAL_ADMIN_LEGACY_RESOURCES,
         base="ubuntu@22.04",
     )
 
