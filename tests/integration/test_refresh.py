@@ -8,7 +8,6 @@ import pathlib
 import re
 
 import jubilant
-import pytest
 from conftest import TEMPORAL_SERVER_APP_NAME
 
 CHARM_SOURCE = pathlib.Path(__file__).parent.parent.parent / "src" / "charm.py"
@@ -42,7 +41,6 @@ def _published_admin_data(juju: jubilant.Juju) -> dict:
     return {}
 
 
-@pytest.mark.skip(reason="Temporarily skipped in CI.")
 def test_refresh_from_1_29_to_current(juju: jubilant.Juju, admin_tools_previous_track, charm_path, charm_resources):
     """Refresh temporal-admin-k8s from 1.29/edge to the locally built charm.
 
