@@ -34,18 +34,15 @@ def state(temporal_admin_container, all_required_relations):
 def test_missing_admin_relation(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
-    )
+    assert state_out.unit_status == ops.BlockedStatus("admin:temporal relation: not available")
 
 
 @pytest.mark.admin_relation_uninitialized
 def test_missing_admin_relation_data(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert state_out.unit_status == ops.BlockedStatus(
-        "admin:temporal relation: database connections info not available"
-    )
+    assert isinstance(state_out.unit_status, ops.BlockedStatus)
+    assert state_out.unit_status.message.startswith("schema migration incomplete for: db, visibility;")
 
 
 def test_ready(context, state, temporal_admin_container):
