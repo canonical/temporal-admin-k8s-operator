@@ -14,11 +14,14 @@ from ops.pebble import ExecError
 
 from charm import WORKLOAD_VERSION
 
+# Workload version of the previous track, i.e. what admin published before this refresh.
+PREVIOUS_WORKLOAD_VERSION = "1.28.4"
+
 
 @pytest.fixture
 def upgrade_state(peer_relation, admin_relation, temporal_admin_container):
     peer_relation.local_app_data["is_initial_schema_ready"] = "true"
-    admin_relation.local_app_data.update(schema_status="ready", migrated_workload_version="1.23.1")
+    admin_relation.local_app_data.update(schema_status="ready", migrated_workload_version=PREVIOUS_WORKLOAD_VERSION)
     return ops.testing.State(
         leader=True, relations=[peer_relation, admin_relation], containers=[temporal_admin_container]
     )
@@ -47,7 +50,7 @@ def test_failed_migration_keeps_old_version_and_resumes_on_pebble_ready(
     assert isinstance(result.unit_status, ops.BlockedStatus)
     assert result.get_relation(admin_relation.id).local_app_data == {
         "schema_status": "ready",
-        "migrated_workload_version": "1.23.1",
+        "migrated_workload_version": PREVIOUS_WORKLOAD_VERSION,
     }
     # update_status no longer retries migrations; pebble_ready resumes the pending upgrade instead.
     with patch("charm.execute") as sql:
@@ -69,7 +72,7 @@ def test_container_unavailable_defers_and_keeps_old_version(
     result = context.run(context.on.upgrade_charm(), state)
     assert result.get_relation(admin_relation.id).local_app_data == {
         "schema_status": "ready",
-        "migrated_workload_version": "1.23.1",
+        "migrated_workload_version": PREVIOUS_WORKLOAD_VERSION,
     }
     assert result.deferred
 
@@ -77,7 +80,7 @@ def test_container_unavailable_defers_and_keeps_old_version(
 def test_pebble_ready_resumes_pending_upgrade(context, peer_relation, admin_relation, temporal_admin_container):
     peer_relation.local_app_data["is_initial_schema_ready"] = "true"
     peer_relation.local_app_data["upgrade_schema_pending"] = "true"
-    admin_relation.local_app_data.update(schema_status="ready", migrated_workload_version="1.23.1")
+    admin_relation.local_app_data.update(schema_status="ready", migrated_workload_version=PREVIOUS_WORKLOAD_VERSION)
     state = ops.testing.State(
         leader=True, relations=[peer_relation, admin_relation], containers=[temporal_admin_container]
     )
@@ -135,7 +138,7 @@ def _admin_relation(relation_id, user_suffix):
         "admin",
         id=relation_id,
         remote_app_data={"database_connections": json.dumps(connections)},
-        local_app_data={"schema_status": "ready", "migrated_workload_version": "1.23.1"},
+        local_app_data={"schema_status": "ready", "migrated_workload_version": PREVIOUS_WORKLOAD_VERSION},
     )
 
 
@@ -240,7 +243,7 @@ def test_unreachable_database_waits_and_defers_without_trying_next_relation_user
     assert calls == [("frontend", "temporal")]
     assert isinstance(result.unit_status, ops.WaitingStatus)
     assert result.deferred
-    assert result.get_relation(10).local_app_data["migrated_workload_version"] == "1.23.1"
+    assert result.get_relation(10).local_app_data["migrated_workload_version"] == PREVIOUS_WORKLOAD_VERSION
 
 
 def test_deferred_migration_completes_once_database_is_back(context, peer_relation, temporal_admin_container):
