@@ -19,7 +19,7 @@ from ops.pebble import ExecError
 from state import State
 
 logger = logging.getLogger(__name__)
-WORKLOAD_VERSION = "1.24.3"
+WORKLOAD_VERSION = "1.28.4"
 SQL_TOOL = f"/bin/temporal-sql-tool-{WORKLOAD_VERSION}"
 SCHEMA_ROOT = f"/etc/temporal/schema-{WORKLOAD_VERSION}/postgresql/v12"
 # update-schema can take a long time on a large, already-populated DB and its duration can't be predicted;
