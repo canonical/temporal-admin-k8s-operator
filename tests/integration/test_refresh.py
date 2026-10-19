@@ -8,7 +8,6 @@ import pathlib
 import re
 
 import jubilant
-
 from conftest import TEMPORAL_SERVER_APP_NAME
 
 CHARM_SOURCE = pathlib.Path(__file__).parent.parent.parent / "src" / "charm.py"
@@ -41,6 +40,7 @@ def _published_admin_data(juju: jubilant.Juju) -> dict:
             return relation.get("application-data", {})
     return {}
 
+
 def test_refresh_from_1_30_to_1_31(
     juju: jubilant.Juju,
     admin_tools_previous_track,
@@ -64,10 +64,7 @@ def test_refresh_from_1_30_to_1_31(
     expected_version = _workload_version()
 
     juju.wait(
-        lambda _: (
-            _published_admin_data(juju).get("migrated_workload_version")
-            == expected_version
-        ),
+        lambda _: (_published_admin_data(juju).get("migrated_workload_version") == expected_version),
         error=jubilant.any_error,
         delay=5,
         timeout=300,
