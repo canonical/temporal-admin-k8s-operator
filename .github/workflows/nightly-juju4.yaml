@@ -1,0 +1,38 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+# Nightly integration tests against Juju 4.x via the team's shared reusable
+# workflow. Each test command gets its own runner provisioned by concierge.
+# Scheduled failures open/update one issue labelled `juju-4`.
+
+name: Juju 4.x Tests
+
+on:
+  schedule:
+    # Run at 02:47 UTC every day
+    - cron: '47 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  integration:
+    name: Integration tests [juju 4.x]
+    uses: canonical/workflows-team/.github/workflows/juju-nightly.yaml@main
+    with:
+      juju-channel: "4.1/edge"
+      # Matches the runner label used by tests.yaml.
+      runner: self-hosted-linux-amd64-resolute-large
+      timeout-minutes: 120
+      # charmcraft pinned via name/channel: the k8s preset installs it at the
+      # default channel first, then the extra snap refreshes it to 4.x/stable.
+      extra-snaps: "charmcraft/4.x/stable,astral-uv,just,kubectl"
+      # 16/stable supports Juju 4; --force bypasses the base check until
+      # postgresql-k8s declares Juju 4 support.
+      extra-env: '{"POSTGRESQL_CHANNEL": "16/stable", "POSTGRESQL_FORCE": "true"}'
+      test-commands: >-
+        ["just integration tests/integration/test_charm.py",
+        "just integration tests/integration/test_refresh.py"]
+      issue-label: juju-4
