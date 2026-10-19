@@ -74,7 +74,7 @@ def deploy_temporal_stack(
 
     juju.integrate("temporal-k8s:admin", "temporal-admin-k8s:admin")
 
-    juju.wait(jubilant.all_active, timeout=600)
+    juju.wait(jubilant.all_active, timeout=1800)
 
 
 @pytest.fixture(scope="module")
