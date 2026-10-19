@@ -16,6 +16,9 @@ POSTGRESQL_CHANNEL = "14/stable"
 TEMPORAL_CHANNEL = "1.31/edge"  # server dependency and the default admin deploy
 TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.23/stable"  # published admin release the refresh test upgrades from
 
+PREVIOUS_SERVER_CHANNEL = "1.30/edge"
+PREVIOUS_ADMIN_CHANNEL = "1.30/edge"
+
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
 METADATA = yaml.safe_load(pathlib.Path("./metadata.yaml").read_text())
@@ -47,7 +50,7 @@ def deploy_temporal_stack(
         app="postgresql-k8s",
         channel=postgresql_channel,
         trust=True,
-        base="ubuntu@24.04",
+        base="ubuntu@22.04",
     )
 
     juju.deploy(
@@ -77,12 +80,12 @@ def deploy_temporal_stack(
 
 @pytest.fixture(scope="module")
 def admin_tools_latest_track(juju: jubilant.Juju):
-    """Deploy the temporal stack with temporal-admin from the latest supported release.
-
-    The refresh test then upgrades this deployment to the newer, locally built charm.
-    """
-    deploy_temporal_stack(juju, temporal_admin_channel=TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL)
-
+    """Deploy the previous Temporal release for refresh testing."""
+    deploy_temporal_stack(
+        juju,
+        temporal_channel=PREVIOUS_SERVER_CHANNEL,
+        temporal_admin_channel=PREVIOUS_ADMIN_CHANNEL,
+    )
     yield "temporal-admin-k8s"
 
 

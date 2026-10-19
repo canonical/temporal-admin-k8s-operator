@@ -8,9 +8,13 @@ import pytest
 from conftest import TEMPORAL_SERVER_APP_NAME
 
 
-@pytest.mark.skip(reason="Skipping because of canonical/temporal-k8s-operator/issues/150")
-def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_track, charm_path, charm_resources):
-    """Refresh from the latest supported temporal-admin-k8s release to the local build."""
+def test_refresh_from_1_30_to_1_31(
+    juju: jubilant.Juju,
+    admin_tools_latest_track,
+    charm_path,
+    charm_resources,
+):
+    """Refresh admin from 1.30/edge to the local 1.31 build."""
     juju.refresh(
         admin_tools_latest_track,
         path=charm_path,
@@ -18,9 +22,8 @@ def test_refresh_from_latest_to_1_23(juju: jubilant.Juju, admin_tools_latest_tra
         base="ubuntu@26.04",
     )
 
-    juju.integrate(
-        f"{TEMPORAL_SERVER_APP_NAME}:temporal-host-info",
-        f"{admin_tools_latest_track}:temporal-host-info",
-    )
-
-    juju.wait(jubilant.all_active, error=jubilant.any_error, timeout=600)
+    juju.wait(
+    lambda status: jubilant.all_active(status, "temporal-admin-k8s"),
+    error=jubilant.any_error,
+    timeout=600,
+)
