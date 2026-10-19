@@ -27,6 +27,9 @@ TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.31/stable"  # published admin release
 # TEMPORAL_CHANNEL carries revisions for more than one base, and without a base
 # Juju picks the older one. Pin the base the current revisions are built for.
 TEMPORAL_BASE = "ubuntu@26.04"
+# The previous-track channels (e.g. 1.30/edge) only ship revisions built for
+# ubuntu@24.04. The refresh test upgrades the base via `juju refresh --base`.
+PREVIOUS_TEMPORAL_BASE = "ubuntu@24.04"
 
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
@@ -98,6 +101,7 @@ def admin_tools_previous_track(juju: jubilant.Juju):
         juju,
         temporal_channel=PREVIOUS_SERVER_CHANNEL,
         temporal_admin_channel=PREVIOUS_ADMIN_CHANNEL,
+        temporal_admin_base=PREVIOUS_TEMPORAL_BASE,
     )
     yield "temporal-admin-k8s"
 
