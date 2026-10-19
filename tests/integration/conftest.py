@@ -78,7 +78,7 @@ def deploy_temporal_stack(
 
 
 @pytest.fixture(scope="module")
-def admin_tools_latest_track(juju: jubilant.Juju):
+def admin_tools_previous_track(juju: jubilant.Juju):
     """Deploy the previous Temporal release for refresh testing."""
     deploy_temporal_stack(
         juju,
@@ -86,6 +86,9 @@ def admin_tools_latest_track(juju: jubilant.Juju):
         temporal_admin_channel=PREVIOUS_ADMIN_CHANNEL,
     )
     yield "temporal-admin-k8s"
+
+
+admin_tools_latest_track = admin_tools_previous_track
 
 
 @pytest.fixture(scope="module")
