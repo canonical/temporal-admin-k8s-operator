@@ -10,12 +10,14 @@ import ops
 import ops.testing
 import pytest
 
+from charm import WORKLOAD_VERSION
+
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture()
-def all_required_relations(request, peer_relation, admin_relation):
-    relations = [peer_relation]
+def all_required_relations(request, admin_relation):
+    relations = []
 
     if not request.node.get_closest_marker("admin_relation_skipped"):
         relations.append(admin_relation)
@@ -55,6 +57,66 @@ def test_ready(context, state, temporal_admin_container):
         assert state_out.get_container("temporal-admin").plan.to_dict() == {}
 
         assert execute.call_count == 4
+
+
+def test_install_sets_maintenance_without_migrating(context, state):
+    with unittest.mock.patch("charm.execute") as execute:
+        state_out = context.run(context.on.install(), state)
+
+    execute.assert_not_called()
+    assert state_out.unit_status == ops.MaintenanceStatus("installing temporal admin tools")
+
+
+def test_ready_publishes_schema_state_on_admin_relation(context, state, temporal_admin_container, admin_relation):
+    with unittest.mock.patch("charm.execute"):
+        state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    assert state_out.get_relation(admin_relation.id).local_app_data == {
+        "schema_status": "ready",
+        "migrated_workload_version": WORKLOAD_VERSION,
+    }
+    assert state_out.workload_version == WORKLOAD_VERSION
+
+
+@pytest.mark.parametrize("event", ["update_status", "config_changed", "leader_elected"])
+def test_routine_events_route_to_reconcile(context, state, event):
+    with unittest.mock.patch("charm.execute") as execute:
+        state_out = context.run(getattr(context.on, event)(), state)
+
+    assert execute.call_count == 4
+    assert state_out.unit_status == ops.ActiveStatus()
+
+
+@pytest.mark.parametrize("event", ["update_status", "config_changed", "leader_elected", "install"])
+def test_nonleader_goes_active_without_migrating(context, state, event):
+    state = dataclasses.replace(state, leader=False)
+    with unittest.mock.patch("charm.execute") as execute:
+        state_out = context.run(getattr(context.on, event)(), state)
+
+    execute.assert_not_called()
+    if event == "install":
+        assert state_out.unit_status == ops.MaintenanceStatus("installing temporal admin tools")
+    else:
+        assert state_out.unit_status == ops.ActiveStatus()
+
+
+def test_reconcile_twice_does_not_migrate_again(context, state, temporal_admin_container):
+    with unittest.mock.patch("charm.execute") as execute:
+        first = context.run(context.on.pebble_ready(temporal_admin_container), state)
+        assert execute.call_count == 4
+        second = context.run(context.on.update_status(), first)
+
+    assert execute.call_count == 4
+    assert second.unit_status == ops.ActiveStatus()
+
+
+def test_container_unavailable_waits_without_migrating(context, state, temporal_admin_container):
+    state = dataclasses.replace(state, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)])
+    with unittest.mock.patch("charm.execute") as execute:
+        state_out = context.run(context.on.update_status(), state)
+
+    execute.assert_not_called()
+    assert state_out.unit_status == ops.MaintenanceStatus("waiting for schema migration container")
 
 
 CA_1 = "-----BEGIN CERTIFICATE-----\nCA-ONE\n-----END CERTIFICATE-----"

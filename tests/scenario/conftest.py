@@ -12,7 +12,7 @@ from charm import TemporalAdminK8SCharm
 def pytest_configure(config):
     """Flags that can be configured to modify fixture behavior.
 
-    Used to determine how _state in the peer relation app databag is populated.
+    Used to determine whether and how the admin relation is populated.
 
     Args:
         config: the pytest config object
@@ -54,18 +54,6 @@ def database_connection_data():
             "user": "jean-luc@visibility",
         },
     }
-
-
-@pytest.fixture(scope="function")
-def peer_relation(request, database_connection_data):
-    state_data = {}
-
-    if not request.node.get_closest_marker("admin_relation_skipped") and not request.node.get_closest_marker(
-        "admin_relation_uninitialized"
-    ):
-        state_data["database_connections"] = json.dumps(database_connection_data)
-
-    return ops.testing.PeerRelation("peer", local_app_data=state_data)
 
 
 @pytest.fixture(scope="function")
