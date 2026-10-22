@@ -23,6 +23,7 @@ from ops.charm import (
     RelationChangedEvent,
     UpgradeCharmEvent,
 )
+from ops.framework import StoredState
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ExecError
 
@@ -40,6 +41,8 @@ PERMISSION_ERRORS = ("pq: permission denied", "pq: must be owner")
 # SQL tool stderr when the database cannot be reached at all (not for bad credentials), e.g.
 # 'Unable to connect to SQL database. {"error": "dial tcp ...: connect: connection refused"}'.
 UNREACHABLE_DB_ERRORS = ("Unable to connect to SQL database", "dial tcp")
+# Events that always re-run the (idempotent) migration, even when the published state is already current.
+FORCING_EVENTS = (UpgradeCharmEvent, RelationChangedEvent, ActionEvent)
 
 
 def _failure_detail(exc: Exception) -> str:
@@ -108,6 +111,9 @@ def log_event_handler(method):
 class TemporalAdminK8SCharm(CharmBase):
     """Temporal admin charm."""
 
+    # Unit-local, never published to a relation: only records that a forced migration has not yet succeeded.
+    _stored = StoredState()
+
     def __init__(self, *args):
         """Construct.
 
@@ -116,6 +122,7 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         super().__init__(*args)
         self.name = "temporal-admin"
+        self._stored.set_default(forced_migration_pending=False)
 
         for event in [
             self.on.install,
@@ -171,6 +178,10 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         if isinstance(event, RelationBrokenEvent):
             self._check_admin_relations()
+        if isinstance(event, FORCING_EVENTS):
+            # Recorded before any precondition can bail out, and cleared only once the migration succeeded, so a
+            # forced migration that is cut short (container not ready, database down, ...) is retried on later events.
+            self._stored.forced_migration_pending = True
         self._check_container_can_connect()
         relations = self._check_admin_relations()
         if not self._migration_required(event, relations):
@@ -182,8 +193,13 @@ class TemporalAdminK8SCharm(CharmBase):
                 "before this refresh.",
                 WORKLOAD_VERSION,
             )
+        if isinstance(event, RelationChangedEvent):
+            # Deliberate exception to "status only at the end": the migration can take up to 45 minutes, so show
+            # progress meanwhile. Only the admin relation-changed handler did this originally.
+            self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
         self._setup_db_schemas(relations)
         self._publish_schema_ready(relations)
+        self._stored.forced_migration_pending = False
 
     def _check_container_can_connect(self):
         """Verify the workload container is reachable.
@@ -228,9 +244,10 @@ class TemporalAdminK8SCharm(CharmBase):
             relations: The admin relations.
 
         Returns:
-            True when the event forces a migration or a published schema state is not current.
+            True when the event forces a migration, a forced migration is still pending, or a published schema state
+            is not current.
         """
-        if isinstance(event, (UpgradeCharmEvent, RelationChangedEvent, ActionEvent)):
+        if isinstance(event, FORCING_EVENTS) or self._stored.forced_migration_pending:
             return True
         return not all(self._schema_published_ready(relation) for relation in relations)
 
@@ -289,7 +306,7 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         try:
             if not self.unit.is_leader():
-                event.fail("schema migration incomplete: run it on the leader unit once the peer relation is ready")
+                event.fail("schema migration incomplete: setup-schema must be run on the leader unit")
                 return
             self._reconcile(event)
             if self.unit.status != ActiveStatus():
