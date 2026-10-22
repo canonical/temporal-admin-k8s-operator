@@ -15,11 +15,17 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
 )
 from charms.temporal_k8s.v0.temporal_host_info import TemporalHostInfoRequirer
 from ops import main
-from ops.charm import ActionEvent, CharmBase
+from ops.charm import (
+    ActionEvent,
+    CharmBase,
+    InstallEvent,
+    RelationBrokenEvent,
+    RelationChangedEvent,
+    UpgradeCharmEvent,
+)
+from ops.framework import StoredState
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ExecError
-
-from state import State
 
 logger = logging.getLogger(__name__)
 RECEIVE_CA_CERT_RELATION_NAME = "receive-ca-cert"
@@ -35,6 +41,8 @@ PERMISSION_ERRORS = ("pq: permission denied", "pq: must be owner")
 # SQL tool stderr when the database cannot be reached at all (not for bad credentials), e.g.
 # 'Unable to connect to SQL database. {"error": "dial tcp ...: connect: connection refused"}'.
 UNREACHABLE_DB_ERRORS = ("Unable to connect to SQL database", "dial tcp")
+# Events that always re-run the (idempotent) migration, even when the published state is already current.
+FORCING_EVENTS = (UpgradeCharmEvent, RelationChangedEvent, ActionEvent)
 
 
 def _failure_detail(exc: Exception) -> str:
@@ -49,6 +57,26 @@ def _failure_detail(exc: Exception) -> str:
     if isinstance(exc, ExecError):
         return f"exit code {exc.exit_code}: {(exc.stderr or '').strip()[-500:]}"
     return type(exc).__name__
+
+
+class ExitWithStatusError(Exception):
+    """Exception raised to exit reconcile with a specific unit status."""
+
+    def __init__(self, msg: str, status_type):
+        """Construct.
+
+        Args:
+            msg: The status message.
+            status_type: The ops status class to report.
+        """
+        super().__init__(str(msg))
+        self.msg = str(msg)
+        self.status_type = status_type
+
+    @property
+    def status(self):
+        """Return the Juju unit status represented by this exception."""
+        return self.status_type(self.msg)
 
 
 def log_event_handler(method):
@@ -83,6 +111,9 @@ def log_event_handler(method):
 class TemporalAdminK8SCharm(CharmBase):
     """Temporal admin charm."""
 
+    # Unit-local, never published to a relation: only records that a forced migration has not yet succeeded.
+    _stored = StoredState()
+
     def __init__(self, *args):
         """Construct.
 
@@ -90,17 +121,20 @@ class TemporalAdminK8SCharm(CharmBase):
             args: Ignore.
         """
         super().__init__(*args)
-        self._state = State(self.app, lambda: self.model.get_relation("peer"))
         self.name = "temporal-admin"
+        self._stored.set_default(forced_migration_pending=False)
 
-        # Handle basic charm lifecycle.
-        self.framework.observe(self.on.install, self._on_install)
-        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
-        self.framework.observe(self.on.temporal_admin_pebble_ready, self._on_temporal_admin_pebble_ready)
-
-        # Handle admin:temporal relation.
-        self.framework.observe(self.on.admin_relation_changed, self._on_admin_relation_changed)
-        self.framework.observe(self.on.admin_relation_broken, self._on_admin_relation_broken)
+        for event in [
+            self.on.install,
+            self.on.upgrade_charm,
+            self.on.config_changed,
+            self.on.leader_elected,
+            self.on.update_status,
+            self.on.temporal_admin_pebble_ready,
+            self.on.admin_relation_changed,
+            self.on.admin_relation_broken,
+        ]:
+            self.framework.observe(event, self._reconcile)
 
         # Handle action
         self.framework.observe(self.on.cli_action, self._on_cli_action)
@@ -120,80 +154,102 @@ class TemporalAdminK8SCharm(CharmBase):
         return "\n".join(sorted(cert.strip() for cert in self.ca_transfer.get_all_certificates()))
 
     @log_event_handler
-    def _on_upgrade_charm(self, event):
-        """Run schema migrations after the charm is upgraded.
-
-        Mark schema migration as pending and attempt to update the Temporal
-        database and visibility schemas using credentials from the available
-        admin relations.
+    def _reconcile(self, event):
+        """Reconcile the charm towards the desired state; idempotent for every event.
 
         Args:
-            event: The upgrade-charm event.
+            event: The event that triggered the reconciliation.
         """
-        if not self.unit.is_leader():
+        try:
+            if isinstance(event, InstallEvent):
+                raise ExitWithStatusError("installing temporal admin tools", MaintenanceStatus)
+            if self.unit.is_leader():
+                self._reconcile_schemas(event)
+        except ExitWithStatusError as e:
+            self.unit.status = e.status
             return
+        self.unit.status = ActiveStatus()
 
-        if not self._state.is_ready():
-            event.defer()
-            return
-
-        logger.warning(
-            "Starting schema migration to %s. This charm cannot verify that a database backup exists or "
-            "is restorable; operators must create and verify a full PostgreSQL backup via postgresql-k8s "
-            "before this refresh.",
-            WORKLOAD_VERSION,
-        )
-        self._state.upgrade_schema_pending = True
-        self._setup_db_schemas(event)
-
-    @log_event_handler
-    def _on_install(self, event):
-        """Install temporal admin tools.
+    def _reconcile_schemas(self, event):
+        """Migrate the schemas when required and publish their readiness; leader only.
 
         Args:
-            event: The event triggered when the relation changed.
+            event: The event being reconciled.
         """
-        self.unit.status = MaintenanceStatus("installing temporal admin tools")
+        if isinstance(event, RelationBrokenEvent):
+            self._check_admin_relations()
+        if isinstance(event, FORCING_EVENTS):
+            # Recorded before any precondition can bail out, and cleared only once the migration succeeded, so a
+            # forced migration that is cut short (container not ready, database down, ...) is retried on later events.
+            self._stored.forced_migration_pending = True
+        self._check_container_can_connect()
+        relations = self._check_admin_relations()
+        if not self._migration_required(event, relations):
+            return
+        if isinstance(event, UpgradeCharmEvent):
+            logger.warning(
+                "Starting schema migration to %s. This charm cannot verify that a database backup exists or "
+                "is restorable; operators must create and verify a full PostgreSQL backup via postgresql-k8s "
+                "before this refresh.",
+                WORKLOAD_VERSION,
+            )
+        if isinstance(event, RelationChangedEvent):
+            # Deliberate exception to "status only at the end": the migration can take up to 45 minutes, so show
+            # progress meanwhile. Only the admin relation-changed handler did this originally.
+            self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
+        self._setup_db_schemas(relations)
+        self._publish_schema_ready(relations)
+        self._stored.forced_migration_pending = False
 
-    @log_event_handler
-    def _on_temporal_admin_pebble_ready(self, event):
-        """Handle workload being ready.
+    def _check_container_can_connect(self):
+        """Verify the workload container is reachable.
+
+        Raises:
+            ExitWithStatusError: If the container cannot be connected to.
+        """
+        if not self.unit.get_container(self.name).can_connect():
+            raise ExitWithStatusError("waiting for schema migration container", MaintenanceStatus)
+
+    def _check_admin_relations(self):
+        """Return the admin relations in ascending id order.
+
+        Returns:
+            The admin relations.
+
+        Raises:
+            ExitWithStatusError: If there is no admin relation.
+        """
+        relations = sorted(self.model.relations.get("admin", []), key=lambda relation: relation.id)
+        if not relations:
+            raise ExitWithStatusError("admin:temporal relation: not available", BlockedStatus)
+        return relations
+
+    def _schema_published_ready(self, relation) -> bool:
+        """Report whether the schema was published as migrated to the current workload version.
 
         Args:
-            event: The event triggered when the workload container is ready.
+            relation: An admin relation.
+
+        Returns:
+            True if schema readiness and the current workload version are published on the relation.
         """
-        if not self._state.is_ready():
-            event.defer()
-            return
-        if self._state.is_initial_schema_ready and not self._state.upgrade_schema_pending:
-            self.unit.status = ActiveStatus()
-            return
-        self._setup_db_schemas(event)
+        data = relation.data[self.app]
+        return data.get("schema_status") == "ready" and data.get("migrated_workload_version") == WORKLOAD_VERSION
 
-    @log_event_handler
-    def _on_admin_relation_changed(self, event):
-        """Handle changes on the admin:temporal relation."""
-        if not self._state.is_ready():
-            event.defer()
-            return
-        self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
-        self._setup_db_schemas(event)
-
-    @log_event_handler
-    def _on_admin_relation_broken(self, event):
-        """Handle the admin:temporal relation being broken.
+    def _migration_required(self, event, relations) -> bool:
+        """Decide whether the schemas must be migrated for this event.
 
         Args:
-            event: The event triggered when the relation was broken.
+            event: The event being reconciled.
+            relations: The admin relations.
+
+        Returns:
+            True when the event forces a migration, a forced migration is still pending, or a published schema state
+            is not current.
         """
-        if not self.unit.is_leader():
-            return
-        if not self._state.is_ready():
-            self.unit.status = BlockedStatus("peer relation unavailable")
-            return
-        if not self.model.relations.get("admin"):
-            self._state.is_initial_schema_ready = False
-            self.unit.status = BlockedStatus("admin:temporal relation: not available")
+        if isinstance(event, FORCING_EVENTS) or self._stored.forced_migration_pending:
+            return True
+        return not all(self._schema_published_ready(relation) for relation in relations)
 
     @log_event_handler
     def _on_cli_action(self, event):
@@ -249,58 +305,36 @@ class TemporalAdminK8SCharm(CharmBase):
             event: The event triggered when the action is triggered.
         """
         try:
-            if not self._setup_db_schemas(event):
-                reason = self.unit.status.message or "run it on the leader unit once the peer relation is ready"
-                event.fail(f"schema migration incomplete: {reason}")
+            if not self.unit.is_leader():
+                event.fail("schema migration incomplete: setup-schema must be run on the leader unit")
+                return
+            self._reconcile(event)
+            if self.unit.status != ActiveStatus():
+                event.fail(f"schema migration incomplete: {self.unit.status.message}")
         except Exception as err:
             event.fail(err)
 
     # flake8: noqa: C901
-    def _setup_db_schemas(self, event):  # pylint: disable=too-many-branches,too-many-statements,R0911
+    def _setup_db_schemas(self, relations):  # pylint: disable=too-many-branches,too-many-statements
         """Initialize and migrate the Temporal database schemas.
 
-        Iterate through the available admin relations and use their database
-        connections to initialize and update the Temporal and visibility schemas.
-        Each schema is attempted with available relation credentials until a
-        migration succeeds.
-
-        On successful migration of all schemas, mark the initial schema as ready,
-        clear the pending upgrade state, publish schema readiness to admin
-        relations, and set the unit to active.
+        Iterate through the admin relations and use their database connections to
+        initialize and update the Temporal and visibility schemas. Each schema is
+        attempted with available relation credentials until a migration succeeds.
 
         Args:
-            event: The event that triggered the schema migration.
+            relations: The admin relations, in the order they are tried.
 
-        Returns:
-            True if all required schemas were migrated successfully, False if
-            migration could not be completed.
+        Raises:
+            ExitWithStatusError: If the schemas could not all be migrated.
         """
-        if not self.model.unit.is_leader():
-            return False
-
-        if not self._state.is_ready():
-            if not isinstance(event, ActionEvent):
-                event.defer()
-            return False
-
         container = self.unit.get_container(self.name)
-        if not container.can_connect():
-            self.unit.status = MaintenanceStatus("waiting for schema migration container")
-            if not isinstance(event, ActionEvent):
-                event.defer()
-            return False
-
         schema_dirs = {
             "db": f"{SCHEMA_ROOT}/temporal/versioned",
             "visibility": f"{SCHEMA_ROOT}/visibility/versioned",
         }
 
         pending = set(schema_dirs)
-        relations = sorted(self.model.relations.get("admin", []), key=lambda relation: relation.id)
-        if not relations:
-            self.unit.status = BlockedStatus("admin:temporal relation: not available")
-            return False
-
         for relation in relations:
             if not relation.app:
                 continue
@@ -355,17 +389,14 @@ class TemporalAdminK8SCharm(CharmBase):
                     )
                     # Nothing ran against an unreachable database, so wait and retry on the next hook.
                     if all(e in (getattr(exc, "stderr", None) or "") for e in UNREACHABLE_DB_ERRORS):
-                        self.unit.status = WaitingStatus("waiting for the database to be reachable")
-                        if not isinstance(event, ActionEvent):
-                            event.defer()
-                        return False
+                        raise ExitWithStatusError("waiting for the database to be reachable", WaitingStatus) from exc
                     # Only a permission error makes another relation's user worth trying.
                     if not any(e in (getattr(exc, "stderr", None) or "") for e in PERMISSION_ERRORS):
-                        self.unit.status = BlockedStatus(
+                        raise ExitWithStatusError(
                             f"schema {key} migration failed (not a permission error); "
-                            "check the charm logs and then run the `setup-schema` action"
-                        )
-                        return False
+                            "check the charm logs and then run the `setup-schema` action",
+                            BlockedStatus,
+                        ) from exc
                     continue
                 logger.info("Schema %s migrated using database user %s", key, connection["user"])
                 pending.remove(key)
@@ -373,22 +404,21 @@ class TemporalAdminK8SCharm(CharmBase):
                 break
 
         if pending:
-            self.unit.status = BlockedStatus(
+            raise ExitWithStatusError(
                 f"schema migration incomplete for: {', '.join(sorted(pending))}; no admin relation provides a "
-                "database user that owns the Temporal tables"
+                "database user that owns the Temporal tables",
+                BlockedStatus,
             )
-            return False
-        self._state.is_initial_schema_ready = True
-        self._state.upgrade_schema_pending = False
-        self._notify_admin_relations_ready()
-        return True
 
-    def _notify_admin_relations_ready(self):
-        """Tell admin relations the schema is ready; migrated_workload_version is not the SQL schema_version."""
-        for relation in self.model.relations.get("admin", []):
+    def _publish_schema_ready(self, relations):
+        """Tell admin relations the schema is ready; migrated_workload_version is not the SQL schema_version.
+
+        Args:
+            relations: The admin relations to publish to.
+        """
+        for relation in relations:
             relation.data[self.app].update({"schema_status": "ready", "migrated_workload_version": WORKLOAD_VERSION})
         self.unit.set_workload_version(WORKLOAD_VERSION)
-        self.unit.status = ActiveStatus()
 
 
 def execute(container, command, *args, timeout=60):
