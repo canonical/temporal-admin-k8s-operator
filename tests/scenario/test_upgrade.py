@@ -348,3 +348,192 @@ def test_relation_changed_remigrates_even_when_published_state_is_current(contex
         result = context.run(context.on.relation_changed(admin_relation), migrated_state)
     assert sql.call_count == 4
     assert result.unit_status == ops.ActiveStatus()
+
+
+FORCED_EVENTS = ["upgrade_charm", "relation_changed", "setup_schema_action"]
+SYNTAX_ERROR = 'Unable to update SQL schema. {"error": "pq: syntax error at or near"}'
+
+
+def _forced_event(context, name, admin_relation):
+    """Build one of the events that force a migration.
+
+    Args:
+        context: The scenario context.
+        name: One of FORCED_EVENTS.
+        admin_relation: The admin relation, for the relation-changed event.
+
+    Returns:
+        The event to run.
+    """
+    if name == "upgrade_charm":
+        return context.on.upgrade_charm()
+    if name == "relation_changed":
+        return context.on.relation_changed(admin_relation)
+    return context.on.action("setup-schema")
+
+
+def _run(context, event, state):
+    """Run an event and return the resulting state, also when an action fails.
+
+    Args:
+        context: The scenario context.
+        event: The event to run.
+        state: The state to run it in.
+
+    Returns:
+        The state after the event.
+    """
+    try:
+        return context.run(event, state)
+    except ops.testing.ActionFailed as failure:
+        return failure.state
+
+
+@pytest.mark.parametrize("forced", FORCED_EVENTS)
+@pytest.mark.parametrize(
+    "stderr, status_type, message",
+    [
+        (UNREACHABLE_DB, ops.WaitingStatus, "waiting for the database to be reachable"),
+        (SYNTAX_ERROR, ops.BlockedStatus, "schema db migration failed (not a permission error)"),
+    ],
+    ids=["unreachable-waiting", "unrelated-blocked"],
+)
+def test_failed_forced_migration_is_retried_until_it_succeeds(
+    context, migrated_state, admin_relation, forced, stderr, status_type, message
+):
+    """A failed forced migration is retried by routine events despite a current published state."""
+    failing = {("jean-luc", "temporal"): stderr}
+    calls = []
+    with patch("charm.execute", side_effect=_fake_execute(calls, failing)):
+        result = _run(context, _forced_event(context, forced, admin_relation), migrated_state)
+    assert isinstance(result.unit_status, status_type)
+    assert result.unit_status.message.startswith(message)
+    assert calls
+
+    # Routine events keep retrying and keep showing the failure instead of reporting Active.
+    for _ in range(2):
+        calls.clear()
+        with patch("charm.execute", side_effect=_fake_execute(calls, failing)):
+            result = context.run(context.on.update_status(), result)
+        assert calls
+        assert isinstance(result.unit_status, status_type)
+        assert result.unit_status.message.startswith(message)
+
+    calls.clear()
+    with patch("charm.execute", side_effect=_fake_execute(calls, {})):
+        result = context.run(context.on.update_status(), result)
+    assert calls == [("jean-luc", "temporal"), ("jean-luc", "visibility")]
+    assert result.unit_status == ops.ActiveStatus()
+    assert result.get_relation(admin_relation.id).local_app_data == {
+        "schema_status": "ready",
+        "migrated_workload_version": WORKLOAD_VERSION,
+    }
+
+    # Once it succeeded nothing is pending any more.
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), result)
+    sql.assert_not_called()
+    assert result.unit_status == ops.ActiveStatus()
+
+
+@pytest.mark.parametrize("forced", FORCED_EVENTS)
+def test_forced_migration_cut_short_by_container_runs_once_it_is_reachable(
+    context, migrated_state, admin_relation, temporal_admin_container, forced
+):
+    unreachable = dataclasses.replace(temporal_admin_container, can_connect=False)
+    with patch("charm.execute") as sql:
+        result = _run(
+            context,
+            _forced_event(context, forced, admin_relation),
+            dataclasses.replace(migrated_state, containers=[unreachable]),
+        )
+    sql.assert_not_called()
+    assert result.unit_status == ops.MaintenanceStatus("waiting for schema migration container")
+
+    with patch("charm.execute") as sql:
+        result = context.run(
+            context.on.pebble_ready(temporal_admin_container),
+            dataclasses.replace(result, containers=[temporal_admin_container]),
+        )
+    assert sql.call_count == 4
+    assert result.unit_status == ops.ActiveStatus()
+
+    with patch("charm.execute") as sql:
+        context.run(context.on.update_status(), result)
+    sql.assert_not_called()
+
+
+def test_setup_schema_on_non_leader_fails_without_peer_relation_wording(context, migrated_state):
+    state = dataclasses.replace(migrated_state, leader=False)
+    with patch("charm.execute") as sql, pytest.raises(ops.testing.ActionFailed) as failure:
+        context.run(context.on.action("setup-schema"), state)
+    sql.assert_not_called()
+    assert str(failure.value) == "schema migration incomplete: setup-schema must be run on the leader unit"
+    assert "peer" not in str(failure.value)
+
+
+def test_setup_schema_on_leader_reports_the_status_message_on_failure(context, migrated_state):
+    failing = {("jean-luc", "temporal"): UNREACHABLE_DB}
+    with patch("charm.execute", side_effect=_fake_execute([], failing)), pytest.raises(
+        ops.testing.ActionFailed
+    ) as failure:
+        context.run(context.on.action("setup-schema"), migrated_state)
+    assert str(failure.value) == "schema migration incomplete: waiting for the database to be reachable"
+
+
+def _statuses_during_migration(context, event, state):
+    """Run an event, recording the unit status each time the migration executes a command.
+
+    Scenario only exposes the final status, so the status is read inside the patched command.
+
+    Args:
+        context: The scenario context.
+        event: The event to run.
+        state: The state to run it in.
+
+    Returns:
+        The statuses seen by each command and the resulting state.
+    """
+    seen = []
+    with context(event, state) as manager:
+
+        def execute(*args, **kwargs):
+            """Record the unit status seen by a migration command.
+
+            Args:
+                args: Ignored.
+                kwargs: Ignored.
+
+            Returns:
+                Empty command output.
+            """
+            seen.append(manager.charm.unit.status)
+            return ""
+
+        with patch("charm.execute", side_effect=execute):
+            result = manager.run()
+    return seen, result
+
+
+def test_admin_relation_changed_shows_handling_admin_change_during_migration(context, migrated_state, admin_relation):
+    seen, result = _statuses_during_migration(context, context.on.relation_changed(admin_relation), migrated_state)
+    assert seen == [ops.WaitingStatus("handling admin change")] * 4
+    assert result.unit_status == ops.ActiveStatus()
+
+
+def test_admin_relation_changed_failure_replaces_the_interim_status(context, migrated_state, admin_relation):
+    failing = {("jean-luc", "temporal"): UNREACHABLE_DB}
+    with patch("charm.execute", side_effect=_fake_execute([], failing)):
+        result = context.run(context.on.relation_changed(admin_relation), migrated_state)
+    assert result.unit_status == ops.WaitingStatus("waiting for the database to be reachable")
+
+
+@pytest.mark.parametrize("event", ["upgrade_charm", "update_status", "pebble_ready"])
+def test_other_migrating_events_set_no_interim_status(context, upgrade_state, temporal_admin_container, event):
+    trigger = (
+        context.on.pebble_ready(temporal_admin_container) if event == "pebble_ready" else getattr(context.on, event)()
+    )
+    seen, result = _statuses_during_migration(context, trigger, upgrade_state)
+    assert len(seen) == 4
+    assert all(isinstance(status, ops.UnknownStatus) for status in seen)
+    assert result.unit_status == ops.ActiveStatus()
