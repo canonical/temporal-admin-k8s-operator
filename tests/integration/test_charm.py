@@ -13,7 +13,12 @@ import time
 
 import jubilant
 import pytest
-from conftest import POSTGRESQL_CHANNEL, TEMPORAL_CHANNEL
+from conftest import (
+    POSTGRESQL_CHANNEL,
+    POSTGRESQL_FORCE,
+    TEMPORAL_BASE,
+    TEMPORAL_CHANNEL,
+)
 from helpers import (
     APP_NAME,
     SERVER_APP_NAME,
@@ -27,9 +32,6 @@ from jubilant import TaskError
 logger = logging.getLogger(__name__)
 
 SELF_SIGNED_CERTIFICATES_CHANNEL = "1/stable"
-# TEMPORAL_CHANNEL carries revisions for more than one base, and without a base
-# Juju picks the older one. Pin the base the current revisions are built for.
-TEMPORAL_BASE = "ubuntu@26.04"
 
 
 @pytest.fixture(name="deploy", scope="module")
@@ -43,6 +45,7 @@ def deploy(juju: jubilant.Juju, charm_path, charm_resources):
         app="postgresql-k8s",
         channel=POSTGRESQL_CHANNEL,
         trust=True,
+        force=POSTGRESQL_FORCE,
     )
     juju.deploy(
         SERVER_APP_NAME,
