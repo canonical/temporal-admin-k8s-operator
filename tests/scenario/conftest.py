@@ -37,6 +37,12 @@ def temporal_admin_container():
 
 
 @pytest.fixture
+def peer_relation():
+    """Provide shared migration bookkeeping for leader states."""
+    return ops.testing.PeerRelation("peer")
+
+
+@pytest.fixture
 def database_connection_data():
     return {
         "db": {

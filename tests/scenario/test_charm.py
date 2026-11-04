@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture()
-def all_required_relations(request, admin_relation):
-    relations = []
+def all_required_relations(request, admin_relation, peer_relation):
+    relations = [peer_relation]
 
     if not request.node.get_closest_marker("admin_relation_skipped"):
         relations.append(admin_relation)
