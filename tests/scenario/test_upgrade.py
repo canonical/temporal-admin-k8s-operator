@@ -398,10 +398,10 @@ def _run(context, event, state):
     ],
     ids=["unreachable-waiting", "unrelated-blocked"],
 )
-def test_failed_forced_migration_is_retried_until_it_succeeds(
+def test_failed_forced_migration_retries_waiting_but_preserves_blocked(
     context, migrated_state, admin_relation, forced, stderr, status_type, message
 ):
-    """A failed forced migration is retried by routine events despite a current published state."""
+    """Update-status retries Waiting failures, but only explicit events retry Blocked failures."""
     failing = {("jean-luc", "temporal"): stderr}
     calls = []
     with patch("charm.execute", side_effect=_fake_execute(calls, failing)):
@@ -409,19 +409,34 @@ def test_failed_forced_migration_is_retried_until_it_succeeds(
     assert isinstance(result.unit_status, status_type)
     assert result.unit_status.message.startswith(message)
     assert calls
+    failure_status = result.unit_status
+    published = {
+        "schema_status": "ready",
+        "migrated_workload_version": WORKLOAD_VERSION,
+    }
+    assert result.get_relation(admin_relation.id).local_app_data == published
 
-    # Routine events keep retrying and keep showing the failure instead of reporting Active.
+    # Blocked failures are preserved even when SQL would now succeed.
     for _ in range(2):
         calls.clear()
-        with patch("charm.execute", side_effect=_fake_execute(calls, failing)):
+        errors = failing if status_type is ops.WaitingStatus else {}
+        with patch("charm.execute", side_effect=_fake_execute(calls, errors)) as sql:
             result = context.run(context.on.update_status(), result)
-        assert calls
-        assert isinstance(result.unit_status, status_type)
-        assert result.unit_status.message.startswith(message)
+        if status_type is ops.WaitingStatus:
+            assert calls == [("jean-luc", "temporal")]
+        else:
+            sql.assert_not_called()
+        assert result.unit_status == failure_status
+        assert result.get_relation(admin_relation.id).local_app_data == published
 
     calls.clear()
+    retry = (
+        context.on.update_status()
+        if status_type is ops.WaitingStatus
+        else _forced_event(context, forced, admin_relation)
+    )
     with patch("charm.execute", side_effect=_fake_execute(calls, {})):
-        result = context.run(context.on.update_status(), result)
+        result = _run(context, retry, result)
     assert calls == [("jean-luc", "temporal"), ("jean-luc", "visibility")]
     assert result.unit_status == ops.ActiveStatus()
     assert result.get_relation(admin_relation.id).local_app_data == {
@@ -434,6 +449,115 @@ def test_failed_forced_migration_is_retried_until_it_succeeds(
         result = context.run(context.on.update_status(), result)
     sql.assert_not_called()
     assert result.unit_status == ops.ActiveStatus()
+
+
+@pytest.mark.parametrize("prerequisite", ["container", "admin_relation"])
+def test_blocked_migration_does_not_freeze_prerequisite_status(
+    context, migrated_state, admin_relation, temporal_admin_container, prerequisite
+):
+    with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): SYNTAX_ERROR})):
+        blocked = context.run(context.on.upgrade_charm(), migrated_state)
+    assert isinstance(blocked.unit_status, ops.BlockedStatus)
+    if prerequisite == "container":
+        unavailable = dataclasses.replace(
+            blocked, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
+        )
+        expected = ops.MaintenanceStatus("waiting for schema migration container")
+    else:
+        unavailable = dataclasses.replace(blocked, relations=[])
+        expected = ops.BlockedStatus("admin:temporal relation: not available")
+
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), unavailable)
+        assert result.unit_status == expected
+        restored = dataclasses.replace(result, containers=blocked.containers, relations=blocked.relations)
+        result = context.run(context.on.update_status(), restored)
+    sql.assert_not_called()
+    assert result.unit_status == blocked.unit_status
+    assert (
+        result.get_relation(admin_relation.id).local_app_data == blocked.get_relation(admin_relation.id).local_app_data
+    )
+
+
+@pytest.mark.parametrize(
+    "forced, prerequisite",
+    [(forced, "container") for forced in FORCED_EVENTS]
+    + [("upgrade_charm", "admin_relation"), ("setup_schema_action", "admin_relation")],
+)
+def test_forcing_event_clears_blocked_failure_before_prerequisites(
+    context, migrated_state, admin_relation, temporal_admin_container, forced, prerequisite
+):
+    with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): SYNTAX_ERROR})):
+        blocked = context.run(context.on.upgrade_charm(), migrated_state)
+    assert isinstance(blocked.unit_status, ops.BlockedStatus)
+    if prerequisite == "container":
+        unavailable = dataclasses.replace(
+            blocked, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
+        )
+        expected = ops.MaintenanceStatus("waiting for schema migration container")
+    else:
+        unavailable = dataclasses.replace(blocked, relations=[])
+        expected = ops.BlockedStatus("admin:temporal relation: not available")
+    with patch("charm.execute") as sql:
+        result = _run(context, _forced_event(context, forced, admin_relation), unavailable)
+    sql.assert_not_called()
+    assert result.unit_status == expected
+
+    restored = dataclasses.replace(result, containers=blocked.containers, relations=blocked.relations)
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), restored)
+    assert sql.call_count == 4
+    assert result.unit_status == ops.ActiveStatus()
+    assert (
+        result.get_relation(admin_relation.id).local_app_data == blocked.get_relation(admin_relation.id).local_app_data
+    )
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), result)
+    sql.assert_not_called()
+    assert result.unit_status == ops.ActiveStatus()
+
+
+@pytest.mark.parametrize("event", ["config_changed", "pebble_ready"])
+def test_blocked_migration_retried_by_other_hook_can_wait_then_retry_on_update_status(
+    context, migrated_state, admin_relation, temporal_admin_container, event
+):
+    with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): SYNTAX_ERROR})):
+        blocked = context.run(context.on.upgrade_charm(), migrated_state)
+    assert isinstance(blocked.unit_status, ops.BlockedStatus)
+    trigger = (
+        context.on.pebble_ready(temporal_admin_container) if event == "pebble_ready" else context.on.config_changed()
+    )
+    with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): UNREACHABLE_DB})) as sql:
+        waiting = context.run(trigger, blocked)
+    assert sql.call_count == 2
+    assert waiting.unit_status == ops.WaitingStatus("waiting for the database to be reachable")
+    assert (
+        waiting.get_relation(admin_relation.id).local_app_data == blocked.get_relation(admin_relation.id).local_app_data
+    )
+
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), waiting)
+    assert sql.call_count == 4
+    assert result.unit_status == ops.ActiveStatus()
+    assert (
+        result.get_relation(admin_relation.id).local_app_data == blocked.get_relation(admin_relation.id).local_app_data
+    )
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), result)
+    sql.assert_not_called()
+    assert result.unit_status == ops.ActiveStatus()
+
+
+def test_unrelated_initial_blocked_status_does_not_suppress_sql(context, upgrade_state, admin_relation):
+    state = dataclasses.replace(upgrade_state, unit_status=ops.BlockedStatus("unrelated failure"))
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.update_status(), state)
+    assert sql.call_count == 4
+    assert result.unit_status == ops.ActiveStatus()
+    assert result.get_relation(admin_relation.id).local_app_data == {
+        "schema_status": "ready",
+        "migrated_workload_version": WORKLOAD_VERSION,
+    }
 
 
 @pytest.mark.parametrize("forced", FORCED_EVENTS)
