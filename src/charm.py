@@ -19,11 +19,8 @@ from ops.charm import (
     ActionEvent,
     CharmBase,
     InstallEvent,
-    LeaderElectedEvent,
     RelationBrokenEvent,
     RelationChangedEvent,
-    RelationCreatedEvent,
-    UpdateStatusEvent,
     UpgradeCharmEvent,
 )
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
@@ -176,6 +173,8 @@ class TemporalAdminK8SCharm(CharmBase):
                 raise ExitWithStatusError("installing temporal admin tools", MaintenanceStatus)
             if self.unit.is_leader():
                 self._reconcile_schemas(event)
+            else:
+                self._check_container_can_connect()
         except ExitWithStatusError as e:
             self.unit.status = e.status
             return
@@ -184,8 +183,8 @@ class TemporalAdminK8SCharm(CharmBase):
     def _reconcile_schemas(self, event):
         """Migrate and publish readiness using leader-shared peer application bookkeeping.
 
-        Update-status retries waiting, but not blocked, migrations. Leader election and peer creation
-        also preserve blocked failures rather than retrying them.
+        Recorded blocked failures are preserved on every non-forcing event. Only forcing events clear
+        that failure and retry the migration.
 
         Args:
             event: The event being reconciled.
@@ -200,9 +199,7 @@ class TemporalAdminK8SCharm(CharmBase):
             migration_data["migration_blocked_message"] = ""
         self._check_container_can_connect()
         relations = self._check_admin_relations()
-        if isinstance(event, (UpdateStatusEvent, LeaderElectedEvent, RelationCreatedEvent)) and migration_data.get(
-            "migration_blocked_message"
-        ):
+        if migration_data.get("migration_blocked_message"):
             raise ExitWithStatusError(migration_data["migration_blocked_message"], BlockedStatus)
         if not self._migration_required(event, relations):
             return
@@ -217,7 +214,6 @@ class TemporalAdminK8SCharm(CharmBase):
             # Deliberate exception to "status only at the end": the migration can take up to 45 minutes, so show
             # progress meanwhile. Only the admin relation-changed handler did this originally.
             self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
-        migration_data["migration_blocked_message"] = ""
         try:
             self._setup_db_schemas(relations)
         except ExitWithStatusError as exc:
