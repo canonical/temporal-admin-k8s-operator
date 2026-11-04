@@ -34,6 +34,7 @@ def migrated_state(admin_relation, temporal_admin_container, peer_relation):
 
 
 def test_refresh_publishes_version_after_both_migrations(context, upgrade_state, admin_relation):
+    """Publish the current version only after migrating both schemas."""
     with patch("charm.execute") as sql:
         result = context.run(context.on.upgrade_charm(), upgrade_state)
     assert result.unit_status == ops.ActiveStatus()
@@ -46,22 +47,36 @@ def test_refresh_publishes_version_after_both_migrations(context, upgrade_state,
 
 
 @pytest.mark.parametrize("failed_call", range(4))
-def test_failed_migration_keeps_old_version_and_resumes_on_pebble_ready(
-    context, upgrade_state, admin_relation, temporal_admin_container, failed_call
+def test_failed_migration_keeps_old_version_until_explicit_retry(
+    context, upgrade_state, admin_relation, temporal_admin_container, peer_relation, failed_call
 ):
-    """A failed migration is never published, so the next reconcile redoes the migration."""
+    """Keep failed schemas unpublished and blocked until an explicit retry succeeds."""
     outcomes = [None] * 4
     outcomes[failed_call] = RuntimeError("migration interrupted")
     with patch("charm.execute", side_effect=outcomes):
         result = context.run(context.on.upgrade_charm(), upgrade_state)
-    assert isinstance(result.unit_status, ops.BlockedStatus)
+    schema = "db" if failed_call < 2 else "visibility"
+    blocked_status = ops.BlockedStatus(
+        f"schema {schema} migration failed (not a permission error); "
+        "check the charm logs and then run the `setup-schema` action"
+    )
+    assert result.unit_status == blocked_status
     assert result.get_relation(admin_relation.id).local_app_data == {
         "schema_status": "ready",
         "migrated_workload_version": "1.23.1",
     }
-    # The published version is stale, so the next reconcile resumes the migration.
+    peer_data = dict(result.get_relation(peer_relation.id).local_app_data)
     with patch("charm.execute") as sql:
-        result = context.run(context.on.pebble_ready(temporal_admin_container), result)
+        preserved = context.run(context.on.pebble_ready(temporal_admin_container), result)
+    sql.assert_not_called()
+    assert preserved.unit_status == blocked_status
+    assert preserved.get_relation(peer_relation.id).local_app_data == peer_data
+    assert (
+        preserved.get_relation(admin_relation.id).local_app_data
+        == result.get_relation(admin_relation.id).local_app_data
+    )
+    with patch("charm.execute") as sql:
+        result = context.run(context.on.action("setup-schema"), preserved)
     assert result.unit_status == ops.ActiveStatus()
     assert sql.call_count == 4
     assert result.get_relation(admin_relation.id).local_app_data["migrated_workload_version"] == WORKLOAD_VERSION
@@ -73,6 +88,7 @@ def test_failed_migration_keeps_old_version_and_resumes_on_pebble_ready(
 def test_container_unavailable_waits_and_keeps_old_version_until_retried(
     context, upgrade_state, admin_relation, temporal_admin_container
 ):
+    """Keep the old version while disconnected and retry when connectivity returns."""
     state = dataclasses.replace(
         upgrade_state, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
     )
@@ -95,6 +111,7 @@ def test_container_unavailable_waits_and_keeps_old_version_until_retried(
 
 
 def test_pebble_ready_resumes_pending_upgrade(context, upgrade_state, admin_relation, temporal_admin_container):
+    """Migrate a stale published version when Pebble becomes ready."""
     with patch("charm.execute") as sql:
         result = context.run(context.on.pebble_ready(temporal_admin_container), upgrade_state)
     assert sql.call_count == 4
@@ -104,6 +121,7 @@ def test_pebble_ready_resumes_pending_upgrade(context, upgrade_state, admin_rela
 
 @pytest.mark.parametrize("leader", [True, False])
 def test_pebble_ready_skips_migration_when_already_done(context, migrated_state, temporal_admin_container, leader):
+    """Skip SQL for current schemas on either unit role."""
     with patch("charm.execute") as sql:
         result = context.run(
             context.on.pebble_ready(temporal_admin_container), dataclasses.replace(migrated_state, leader=leader)
@@ -113,6 +131,7 @@ def test_pebble_ready_skips_migration_when_already_done(context, migrated_state,
 
 
 def test_nonleader_does_not_migrate(context, upgrade_state, admin_relation):
+    """Leave published schema state untouched on a nonleader refresh."""
     with patch("charm.execute") as sql:
         result = context.run(context.on.upgrade_charm(), dataclasses.replace(upgrade_state, leader=False))
     sql.assert_not_called()
@@ -122,6 +141,7 @@ def test_nonleader_does_not_migrate(context, upgrade_state, admin_relation):
 
 @pytest.mark.parametrize("event", ["update_status", "config_changed", "leader_elected"])
 def test_stale_published_version_is_reconciled_on_routine_events(context, upgrade_state, admin_relation, event):
+    """Migrate stale schemas on routine reconciliation hooks."""
     with patch("charm.execute") as sql:
         result = context.run(getattr(context.on, event)(), upgrade_state)
     assert sql.call_count == 4
@@ -134,6 +154,7 @@ def test_stale_published_version_is_reconciled_on_routine_events(context, upgrad
 
 @pytest.mark.parametrize("event", ["update_status", "config_changed", "leader_elected"])
 def test_routine_events_do_not_migrate_when_published_state_is_current(context, migrated_state, event):
+    """Avoid SQL on routine hooks when readiness is already current."""
     with patch("charm.execute") as sql:
         result = context.run(getattr(context.on, event)(), migrated_state)
     sql.assert_not_called()
@@ -141,6 +162,7 @@ def test_routine_events_do_not_migrate_when_published_state_is_current(context, 
 
 
 def test_reconcile_is_idempotent(context, upgrade_state, admin_relation):
+    """Migrate once across repeated hooks with identical desired state."""
     with patch("charm.execute") as sql:
         first = context.run(context.on.update_status(), upgrade_state)
         assert sql.call_count == 4
@@ -152,6 +174,7 @@ def test_reconcile_is_idempotent(context, upgrade_state, admin_relation):
 
 @pytest.mark.parametrize("status", [None, "pending"])
 def test_unready_schema_status_is_migrated(context, migrated_state, admin_relation, peer_relation, status):
+    """Migrate absent or pending readiness even when the version is current."""
     local_data = {"migrated_workload_version": WORKLOAD_VERSION}
     if status:
         local_data["schema_status"] = status
@@ -165,6 +188,7 @@ def test_unready_schema_status_is_migrated(context, migrated_state, admin_relati
 
 
 def test_action_without_container_fails_without_deferring(context, upgrade_state, temporal_admin_container):
+    """Fail setup-schema immediately when the container is disconnected."""
     state = dataclasses.replace(
         upgrade_state, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
     )
@@ -256,6 +280,7 @@ def _fake_execute(calls, errors):
 
 
 def test_failed_visibility_migration_retries_with_next_relation_user(context, temporal_admin_container):
+    """Retry only the permission-denied schema with the next relation's user."""
     calls = []
     errors = {("frontend", "visibility"): "error executing statement: pq: must be owner of table executions_visibility"}
     state = _two_relation_state(temporal_admin_container)
@@ -270,6 +295,7 @@ def test_failed_visibility_migration_retries_with_next_relation_user(context, te
 
 
 def test_unrelated_error_blocks_without_trying_next_relation_user(context, temporal_admin_container):
+    """Stop on non-permission SQL errors without trying another user."""
     calls = []
     errors = {("frontend", "visibility"): 'Unable to update SQL schema. {"error": "pq: syntax error at or near"}'}
     state = _two_relation_state(temporal_admin_container)
@@ -287,6 +313,7 @@ BAD_PASSWORD = 'Unable to connect to SQL database. {"error": "pq: password authe
 
 
 def test_unreachable_database_waits_without_trying_next_relation_user(context, temporal_admin_container):
+    """Wait for an unreachable database without trying another user."""
     calls = []
     errors = {("frontend", "temporal"): UNREACHABLE_DB}
     state = _two_relation_state(temporal_admin_container)
@@ -300,6 +327,7 @@ def test_unreachable_database_waits_without_trying_next_relation_user(context, t
 
 
 def test_migration_completes_on_next_event_once_database_is_back(context, temporal_admin_container):
+    """Automatically recover a waiting migration when the database returns."""
     state = _two_relation_state(temporal_admin_container)
     with patch("charm.execute", side_effect=_fake_execute([], {("frontend", "temporal"): UNREACHABLE_DB})):
         result = context.run(context.on.upgrade_charm(), state)
@@ -313,13 +341,17 @@ def test_migration_completes_on_next_event_once_database_is_back(context, tempor
 
 
 def test_bad_credentials_block_instead_of_waiting(context, temporal_admin_container):
+    """Block bad credentials rather than treating authentication failure as an outage."""
     state = _two_relation_state(temporal_admin_container)
     errors = {("frontend", "temporal"): BAD_PASSWORD}
 
     with patch("charm.execute", side_effect=_fake_execute([], errors)):
         result = context.run(context.on.upgrade_charm(), state)
 
-    assert isinstance(result.unit_status, ops.BlockedStatus)
+    assert result.unit_status == ops.BlockedStatus(
+        "schema db migration failed (not a permission error); "
+        "check the charm logs and then run the `setup-schema` action"
+    )
     assert result.get_relation(10).local_app_data["migrated_workload_version"] == "1.23.1"
 
 
@@ -327,6 +359,7 @@ def test_bad_credentials_block_instead_of_waiting(context, temporal_admin_contai
 def test_recreated_admin_relation_on_fresh_db_runs_setup_schema(
     context, migrated_state, admin_relation, temporal_admin_container, peer_relation, event
 ):
+    """Initialize schemas again when a recreated relation has no published readiness."""
     removed = context.run(context.on.relation_broken(admin_relation), migrated_state)
     assert removed.unit_status == ops.BlockedStatus("admin:temporal relation: not available")
 
@@ -351,6 +384,7 @@ def test_recreated_admin_relation_on_fresh_db_runs_setup_schema(
 
 
 def test_relation_changed_remigrates_even_when_published_state_is_current(context, migrated_state, admin_relation):
+    """Force migration on admin changes despite current published readiness."""
     with patch("charm.execute") as sql:
         result = context.run(context.on.relation_changed(admin_relation), migrated_state)
     assert sql.call_count == 4
@@ -469,6 +503,7 @@ def test_failed_forced_migration_retries_waiting_but_preserves_blocked(
 def test_blocked_migration_does_not_freeze_prerequisite_status(
     context, migrated_state, admin_relation, temporal_admin_container, peer_relation, prerequisite
 ):
+    """Report missing prerequisites before restoring a recorded migration failure."""
     with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): SYNTAX_ERROR})):
         blocked = context.run(context.on.upgrade_charm(), migrated_state)
     assert isinstance(blocked.unit_status, ops.BlockedStatus)
@@ -501,6 +536,7 @@ def test_blocked_migration_does_not_freeze_prerequisite_status(
 def test_forcing_event_clears_blocked_failure_before_prerequisites(
     context, migrated_state, admin_relation, temporal_admin_container, peer_relation, forced, prerequisite
 ):
+    """Record an explicit retry before checking connectivity or admin relations."""
     with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): SYNTAX_ERROR})):
         blocked = context.run(context.on.upgrade_charm(), migrated_state)
     assert isinstance(blocked.unit_status, ops.BlockedStatus)
@@ -691,28 +727,55 @@ def test_publication_failure_propagates_without_clearing_pending(
     assert dict(observed_bags[1]) == admin_relation.local_app_data
 
 
-@pytest.mark.parametrize("event", ["config_changed", "pebble_ready"])
-def test_blocked_migration_retried_by_other_hook_can_wait_then_retry_on_update_status(
-    context, migrated_state, admin_relation, temporal_admin_container, event
+@pytest.mark.parametrize("forced", FORCED_EVENTS)
+def test_nonforcing_hooks_preserve_blocked_until_explicit_retry_can_wait(
+    context, migrated_state, admin_relation, temporal_admin_container, peer_relation, forced
 ):
+    """Preserve recorded failures on hooks; explicit retries may wait and then auto-retry."""
     with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): SYNTAX_ERROR})):
         blocked = context.run(context.on.upgrade_charm(), migrated_state)
-    assert isinstance(blocked.unit_status, ops.BlockedStatus)
-    trigger = (
-        context.on.pebble_ready(temporal_admin_container) if event == "pebble_ready" else context.on.config_changed()
+    blocked_status = ops.BlockedStatus(
+        "schema db migration failed (not a permission error); "
+        "check the charm logs and then run the `setup-schema` action"
     )
+    assert blocked.unit_status == blocked_status
+    peer_data = dict(blocked.get_relation(peer_relation.id).local_app_data)
+    published = dict(blocked.get_relation(admin_relation.id).local_app_data)
+    for trigger in (
+        context.on.config_changed(),
+        context.on.pebble_ready(temporal_admin_container),
+        context.on.update_status(),
+        context.on.leader_elected(),
+        context.on.relation_created(blocked.get_relation(peer_relation.id)),
+    ):
+        with patch("charm.execute") as sql:
+            blocked = context.run(trigger, blocked)
+        sql.assert_not_called()
+        assert blocked.unit_status == blocked_status
+        assert blocked.get_relation(peer_relation.id).local_app_data == peer_data
+        assert blocked.get_relation(admin_relation.id).local_app_data == published
+        assert blocked.get_container("temporal-admin").plan.to_dict() == {}
+
     with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): UNREACHABLE_DB})) as sql:
-        waiting = context.run(trigger, blocked)
+        waiting = _run(context, _forced_event(context, forced, admin_relation), blocked)
     assert sql.call_count == 2
     assert waiting.unit_status == ops.WaitingStatus("waiting for the database to be reachable")
-    assert (
-        waiting.get_relation(admin_relation.id).local_app_data == blocked.get_relation(admin_relation.id).local_app_data
-    )
+    assert waiting.get_relation(peer_relation.id).local_app_data == {"forced_migration_pending": "true"}
+    assert waiting.get_relation(admin_relation.id).local_app_data == published
+    assert waiting.get_container("temporal-admin").plan.to_dict() == {}
+
+    with patch("charm.execute", side_effect=_fake_execute([], {("jean-luc", "temporal"): UNREACHABLE_DB})) as sql:
+        waiting = context.run(context.on.update_status(), waiting)
+    assert sql.call_count == 2
+    assert waiting.unit_status == ops.WaitingStatus("waiting for the database to be reachable")
+    assert waiting.get_relation(peer_relation.id).local_app_data == {"forced_migration_pending": "true"}
+    assert waiting.get_relation(admin_relation.id).local_app_data == published
 
     with patch("charm.execute") as sql:
         result = context.run(context.on.update_status(), waiting)
     assert sql.call_count == 4
     assert result.unit_status == ops.ActiveStatus()
+    assert result.get_relation(peer_relation.id).local_app_data == {"forced_migration_pending": "false"}
     assert (
         result.get_relation(admin_relation.id).local_app_data == blocked.get_relation(admin_relation.id).local_app_data
     )
@@ -723,6 +786,7 @@ def test_blocked_migration_retried_by_other_hook_can_wait_then_retry_on_update_s
 
 
 def test_unrelated_initial_blocked_status_does_not_suppress_sql(context, upgrade_state, admin_relation):
+    """Reconcile normally when only an unrelated unit status is blocked."""
     state = dataclasses.replace(upgrade_state, unit_status=ops.BlockedStatus("unrelated failure"))
     with patch("charm.execute") as sql:
         result = context.run(context.on.update_status(), state)
@@ -738,6 +802,7 @@ def test_unrelated_initial_blocked_status_does_not_suppress_sql(context, upgrade
 def test_forced_migration_cut_short_by_container_runs_once_it_is_reachable(
     context, migrated_state, admin_relation, temporal_admin_container, forced
 ):
+    """Remember forced migration while disconnected and complete it only once."""
     unreachable = dataclasses.replace(temporal_admin_container, can_connect=False)
     with patch("charm.execute") as sql:
         result = _run(
@@ -762,6 +827,7 @@ def test_forced_migration_cut_short_by_container_runs_once_it_is_reachable(
 
 
 def test_setup_schema_on_non_leader_fails_without_peer_relation_wording(context, migrated_state):
+    """Explain that setup-schema requires leadership rather than a peer relation."""
     state = dataclasses.replace(migrated_state, leader=False)
     with patch("charm.execute") as sql, pytest.raises(ops.testing.ActionFailed) as failure:
         context.run(context.on.action("setup-schema"), state)
@@ -771,6 +837,7 @@ def test_setup_schema_on_non_leader_fails_without_peer_relation_wording(context,
 
 
 def test_setup_schema_on_leader_reports_the_status_message_on_failure(context, migrated_state):
+    """Include the reconciliation failure status in setup-schema action errors."""
     failing = {("jean-luc", "temporal"): UNREACHABLE_DB}
     with patch("charm.execute", side_effect=_fake_execute([], failing)), pytest.raises(
         ops.testing.ActionFailed
@@ -814,12 +881,14 @@ def _statuses_during_migration(context, event, state):
 
 
 def test_admin_relation_changed_shows_handling_admin_change_during_migration(context, migrated_state, admin_relation):
+    """Expose the admin-change progress status while migration commands execute."""
     seen, result = _statuses_during_migration(context, context.on.relation_changed(admin_relation), migrated_state)
     assert seen == [ops.WaitingStatus("handling admin change")] * 4
     assert result.unit_status == ops.ActiveStatus()
 
 
 def test_admin_relation_changed_failure_replaces_the_interim_status(context, migrated_state, admin_relation):
+    """Replace admin-change progress with the database outage status on failure."""
     failing = {("jean-luc", "temporal"): UNREACHABLE_DB}
     with patch("charm.execute", side_effect=_fake_execute([], failing)):
         result = context.run(context.on.relation_changed(admin_relation), migrated_state)
@@ -828,6 +897,7 @@ def test_admin_relation_changed_failure_replaces_the_interim_status(context, mig
 
 @pytest.mark.parametrize("event", ["upgrade_charm", "update_status", "pebble_ready"])
 def test_other_migrating_events_set_no_interim_status(context, upgrade_state, temporal_admin_container, event):
+    """Leave status unchanged during SQL on events other than admin changes."""
     trigger = (
         context.on.pebble_ready(temporal_admin_container) if event == "pebble_ready" else getattr(context.on, event)()
     )

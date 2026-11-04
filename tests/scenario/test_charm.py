@@ -36,6 +36,7 @@ def state(temporal_admin_container, all_required_relations):
 
 @pytest.mark.admin_relation_skipped
 def test_missing_admin_relation(context, state, temporal_admin_container):
+    """Block when the admin relation is absent."""
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
     assert state_out.unit_status == ops.BlockedStatus("admin:temporal relation: not available")
@@ -43,6 +44,7 @@ def test_missing_admin_relation(context, state, temporal_admin_container):
 
 @pytest.mark.admin_relation_uninitialized
 def test_missing_admin_relation_data(context, state, temporal_admin_container):
+    """Block when no admin credentials can migrate either schema."""
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
     assert isinstance(state_out.unit_status, ops.BlockedStatus)
@@ -50,6 +52,7 @@ def test_missing_admin_relation_data(context, state, temporal_admin_container):
 
 
 def test_ready(context, state, temporal_admin_container):
+    """Migrate both schemas without adding Pebble services."""
     with unittest.mock.patch("charm.execute") as execute:
         state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
@@ -60,6 +63,7 @@ def test_ready(context, state, temporal_admin_container):
 
 
 def test_install_sets_maintenance_without_migrating(context, state):
+    """Report installation without running SQL."""
     with unittest.mock.patch("charm.execute") as execute:
         state_out = context.run(context.on.install(), state)
 
@@ -68,6 +72,7 @@ def test_install_sets_maintenance_without_migrating(context, state):
 
 
 def test_ready_publishes_schema_state_on_admin_relation(context, state, temporal_admin_container, admin_relation):
+    """Publish readiness and the workload version after migration."""
     with unittest.mock.patch("charm.execute"):
         state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
@@ -80,6 +85,7 @@ def test_ready_publishes_schema_state_on_admin_relation(context, state, temporal
 
 @pytest.mark.parametrize("event", ["update_status", "config_changed", "leader_elected"])
 def test_routine_events_route_to_reconcile(context, state, event):
+    """Reconcile unpublished schemas on routine hooks."""
     with unittest.mock.patch("charm.execute") as execute:
         state_out = context.run(getattr(context.on, event)(), state)
 
@@ -89,6 +95,7 @@ def test_routine_events_route_to_reconcile(context, state, event):
 
 @pytest.mark.parametrize("event", ["update_status", "config_changed", "leader_elected", "install"])
 def test_nonleader_goes_active_without_migrating(context, state, event):
+    """Keep connected nonleaders SQL-free, retaining install maintenance."""
     state = dataclasses.replace(state, leader=False)
     with unittest.mock.patch("charm.execute") as execute:
         state_out = context.run(getattr(context.on, event)(), state)
@@ -100,23 +107,81 @@ def test_nonleader_goes_active_without_migrating(context, state, event):
         assert state_out.unit_status == ops.ActiveStatus()
 
 
-def test_reconcile_twice_does_not_migrate_again(context, state, temporal_admin_container):
-    with unittest.mock.patch("charm.execute") as execute:
-        first = context.run(context.on.pebble_ready(temporal_admin_container), state)
-        assert execute.call_count == 4
-        second = context.run(context.on.update_status(), first)
-
-    assert execute.call_count == 4
-    assert second.unit_status == ops.ActiveStatus()
-
-
-def test_container_unavailable_waits_without_migrating(context, state, temporal_admin_container):
+@pytest.mark.parametrize("leader", [True, False], ids=["leader", "nonleader"])
+@pytest.mark.parametrize(
+    "event",
+    [
+        "install",
+        "update_status",
+        "config_changed",
+        "leader_elected",
+        "pebble_ready",
+        "upgrade_charm",
+        "relation_changed",
+        "peer_created",
+    ],
+)
+def test_container_unavailable_waits_without_migrating(
+    context, state, temporal_admin_container, admin_relation, peer_relation, leader, event
+):
+    """Wait for connectivity on both roles, preserving install and forcing bookkeeping."""
+    state = dataclasses.replace(state, leader=leader)
     state = dataclasses.replace(state, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)])
+    if event == "pebble_ready":
+        trigger = context.on.pebble_ready(temporal_admin_container)
+    elif event == "relation_changed":
+        trigger = context.on.relation_changed(admin_relation)
+    elif event == "peer_created":
+        trigger = context.on.relation_created(peer_relation)
+    else:
+        trigger = getattr(context.on, event)()
     with unittest.mock.patch("charm.execute") as execute:
-        state_out = context.run(context.on.update_status(), state)
+        state_out = context.run(trigger, state)
 
     execute.assert_not_called()
-    assert state_out.unit_status == ops.MaintenanceStatus("waiting for schema migration container")
+    message = "installing temporal admin tools" if event == "install" else "waiting for schema migration container"
+    assert state_out.unit_status == ops.MaintenanceStatus(message)
+    expected_peer = dict(peer_relation.local_app_data)
+    if leader and event in ("upgrade_charm", "relation_changed"):
+        expected_peer["forced_migration_pending"] = "true"
+    assert state_out.get_relation(peer_relation.id).local_app_data == expected_peer
+    assert state_out.get_relation(admin_relation.id).local_app_data == admin_relation.local_app_data
+    assert state_out.get_container("temporal-admin").plan.to_dict() == {}
+
+
+@pytest.mark.parametrize("leader", [True, False], ids=["leader", "nonleader"])
+@pytest.mark.parametrize("action", ["cli", "setup-schema"])
+def test_disconnected_actions_keep_their_own_failure_behavior(
+    context, state, temporal_admin_container, admin_relation, peer_relation, leader, action
+):
+    """Fail disconnected actions without applying nonleader hook maintenance."""
+    state = dataclasses.replace(
+        state, leader=leader, containers=[dataclasses.replace(temporal_admin_container, can_connect=False)]
+    )
+    with unittest.mock.patch("charm.execute") as execute, pytest.raises(ops.testing.ActionFailed) as failure:
+        context.run(
+            context.on.action(action, params={"args": "operator cluster health"} if action == "cli" else {}), state
+        )
+    execute.assert_not_called()
+    if action == "cli":
+        expected = "cannot connect to container"
+    elif leader:
+        expected = "schema migration incomplete: waiting for schema migration container"
+    else:
+        expected = "schema migration incomplete: setup-schema must be run on the leader unit"
+    assert str(failure.value) == expected
+    result = failure.value.state
+    assert result.unit_status == (
+        ops.MaintenanceStatus("waiting for schema migration container")
+        if action == "setup-schema" and leader
+        else state.unit_status
+    )
+    expected_peer = dict(peer_relation.local_app_data)
+    if action == "setup-schema" and leader:
+        expected_peer["forced_migration_pending"] = "true"
+    assert result.get_relation(peer_relation.id).local_app_data == expected_peer
+    assert result.get_relation(admin_relation.id).local_app_data == admin_relation.local_app_data
+    assert result.get_container("temporal-admin").plan.to_dict() == {}
 
 
 CA_1 = "-----BEGIN CERTIFICATE-----\nCA-ONE\n-----END CERTIFICATE-----"
@@ -163,6 +228,7 @@ def _run_cli(context, state):
 
 
 def test_cli_action_plaintext_frontend(context, state, temporal_admin_container, tmp_path):
+    """Dial a plaintext frontend without TLS flags."""
     # Without the tls signal the CLI dials the frontend in plaintext, as before.
     state = _cli_state(state, temporal_admin_container, tmp_path, {"host": FRONTEND_HOST, "port": "7233"})
 
@@ -173,6 +239,7 @@ def test_cli_action_plaintext_frontend(context, state, temporal_admin_container,
 
 
 def test_cli_action_tls_frontend_with_ca(context, state, temporal_admin_container, tmp_path):
+    """Push the provider CA and pass single-token TLS flags."""
     # A TLS frontend is dialled over TLS and verified against the CA from the
     # certificates provider, which is pushed into the container for the run.
     # Each flag is a single token: `--tls --tls-ca-path <path>` before the
@@ -201,6 +268,7 @@ def test_cli_action_tls_frontend_with_ca(context, state, temporal_admin_containe
 
 
 def test_cli_action_tls_frontend_without_ca_fails(context, state, temporal_admin_container, tmp_path):
+    """Fail before executing the CLI when its TLS CA is absent."""
     # Without the CA the frontend can't be verified, so the action fails with an
     # actionable message instead of running a command that can't connect.
     state = _cli_state(
@@ -213,6 +281,7 @@ def test_cli_action_tls_frontend_without_ca_fails(context, state, temporal_admin
 
 
 def test_cli_action_fails_without_host_info(context, state, temporal_admin_container, tmp_path):
+    """Reject CLI actions without frontend connection information."""
     state = _cli_state(state, temporal_admin_container, tmp_path, None)
 
     with pytest.raises(ops.testing.ActionFailed, match="temporal-host-info relation not established"):
