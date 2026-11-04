@@ -19,12 +19,13 @@ from ops.charm import (
     ActionEvent,
     CharmBase,
     InstallEvent,
+    LeaderElectedEvent,
     RelationBrokenEvent,
     RelationChangedEvent,
+    RelationCreatedEvent,
     UpdateStatusEvent,
     UpgradeCharmEvent,
 )
-from ops.framework import StoredState
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ExecError
 
@@ -112,9 +113,6 @@ def log_event_handler(method):
 class TemporalAdminK8SCharm(CharmBase):
     """Temporal admin charm."""
 
-    # Unit-local, never published to a relation: records pending migrations and their blocked failure.
-    _stored = StoredState()
-
     def __init__(self, *args):
         """Construct.
 
@@ -123,13 +121,13 @@ class TemporalAdminK8SCharm(CharmBase):
         """
         super().__init__(*args)
         self.name = "temporal-admin"
-        self._stored.set_default(forced_migration_pending=False, migration_blocked_message="")
 
         for event in [
             self.on.install,
             self.on.upgrade_charm,
             self.on.config_changed,
             self.on.leader_elected,
+            self.on.peer_relation_created,
             self.on.update_status,
             self.on.temporal_admin_pebble_ready,
             self.on.admin_relation_changed,
@@ -148,6 +146,18 @@ class TemporalAdminK8SCharm(CharmBase):
         # certificates provider, not from the Temporal server charm. It is read
         # when an action runs, so no events need observing here.
         self.ca_transfer = CertificateTransferRequires(self, RECEIVE_CA_CERT_RELATION_NAME)
+
+    @property
+    def _migration_data(self):
+        """Return peer application bookkeeping shared across leaders, never cached credentials.
+
+        Raises:
+            ExitWithStatusError: If the peer relation is unavailable.
+        """
+        peer = self.model.get_relation("peer")
+        if peer is None:
+            raise ExitWithStatusError("peer relation unavailable", BlockedStatus)
+        return peer.data[self.app]
 
     @property
     def _ca_bundle(self) -> str:
@@ -172,22 +182,28 @@ class TemporalAdminK8SCharm(CharmBase):
         self.unit.status = ActiveStatus()
 
     def _reconcile_schemas(self, event):
-        """Migrate and publish readiness; update-status retries waiting, but not blocked, migrations.
+        """Migrate and publish readiness using leader-shared peer application bookkeeping.
+
+        Update-status retries waiting, but not blocked, migrations. Leader election and peer creation
+        also preserve blocked failures rather than retrying them.
 
         Args:
             event: The event being reconciled.
         """
         if isinstance(event, RelationBrokenEvent):
             self._check_admin_relations()
+        migration_data = self._migration_data
         if isinstance(event, FORCING_EVENTS):
             # Recorded before any precondition can bail out, and cleared only once the migration succeeded, so a
             # forced migration cut short by unreadiness is retried; forcing events also retry blocked migrations.
-            self._stored.forced_migration_pending = True
-            self._stored.migration_blocked_message = ""
+            migration_data["forced_migration_pending"] = json.dumps(True)
+            migration_data["migration_blocked_message"] = ""
         self._check_container_can_connect()
         relations = self._check_admin_relations()
-        if isinstance(event, UpdateStatusEvent) and self._stored.migration_blocked_message:
-            raise ExitWithStatusError(self._stored.migration_blocked_message, BlockedStatus)
+        if isinstance(event, (UpdateStatusEvent, LeaderElectedEvent, RelationCreatedEvent)) and migration_data.get(
+            "migration_blocked_message"
+        ):
+            raise ExitWithStatusError(migration_data["migration_blocked_message"], BlockedStatus)
         if not self._migration_required(event, relations):
             return
         if isinstance(event, UpgradeCharmEvent):
@@ -201,16 +217,16 @@ class TemporalAdminK8SCharm(CharmBase):
             # Deliberate exception to "status only at the end": the migration can take up to 45 minutes, so show
             # progress meanwhile. Only the admin relation-changed handler did this originally.
             self.unit.status = WaitingStatus(f"handling {event.relation.name} change")
-        self._stored.migration_blocked_message = ""
+        migration_data["migration_blocked_message"] = ""
         try:
             self._setup_db_schemas(relations)
         except ExitWithStatusError as exc:
             if exc.status_type is BlockedStatus:
-                self._stored.migration_blocked_message = exc.msg
+                migration_data["migration_blocked_message"] = exc.msg
             raise
         self._publish_schema_ready(relations)
-        self._stored.forced_migration_pending = False
-        self._stored.migration_blocked_message = ""
+        migration_data["forced_migration_pending"] = json.dumps(False)
+        migration_data["migration_blocked_message"] = ""
 
     def _check_container_can_connect(self):
         """Verify the workload container is reachable.
@@ -258,7 +274,9 @@ class TemporalAdminK8SCharm(CharmBase):
             True when the event forces a migration, a forced migration is still pending, or a published schema state
             is not current.
         """
-        if isinstance(event, FORCING_EVENTS) or self._stored.forced_migration_pending:
+        if isinstance(event, FORCING_EVENTS) or json.loads(
+            self._migration_data.get("forced_migration_pending", "false")
+        ):
             return True
         return not all(self._schema_published_ready(relation) for relation in relations)
 
