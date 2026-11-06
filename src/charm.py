@@ -200,8 +200,7 @@ class TemporalAdminK8SCharm(CharmBase):
         self._check_container_can_connect()
         relations = self._check_admin_relations()
         if all(
-            not relation.app
-            or not relation.data[relation.app].get("database_connections", "").strip()
+            not relation.app or not relation.data[relation.app].get("database_connections", "").strip()
             for relation in relations
         ):
             raise ExitWithStatusError("waiting for database connection data", WaitingStatus)
