@@ -199,6 +199,12 @@ class TemporalAdminK8SCharm(CharmBase):
             migration_data["migration_blocked_message"] = ""
         self._check_container_can_connect()
         relations = self._check_admin_relations()
+        if all(
+            not relation.app
+            or not relation.data[relation.app].get("database_connections", "").strip()
+            for relation in relations
+        ):
+            raise ExitWithStatusError("waiting for database connection data", WaitingStatus)
         if migration_data.get("migration_blocked_message"):
             raise ExitWithStatusError(migration_data["migration_blocked_message"], BlockedStatus)
         if not self._migration_required(event, relations):

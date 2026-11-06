@@ -43,8 +43,28 @@ def test_missing_admin_relation(context, state, temporal_admin_container):
 def test_missing_admin_relation_data(context, state, temporal_admin_container):
     state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
 
-    assert isinstance(state_out.unit_status, ops.BlockedStatus)
-    assert state_out.unit_status.message.startswith("schema migration incomplete for: db, visibility;")
+    assert state_out.unit_status == ops.WaitingStatus("waiting for database connection data")
+
+
+@pytest.mark.admin_relation_uninitialized
+def test_admin_relation_data_arriving_recovers(context, state, temporal_admin_container, database_connection_data):
+    state_out = context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    assert state_out.unit_status == ops.WaitingStatus("waiting for database connection data")
+
+    admin_relation = state_out.get_relations("admin")[0]
+    ready_relation = ops.testing.Relation(
+        "admin",
+        id=admin_relation.id,
+        remote_app_data={"database_connections": json.dumps(database_connection_data)},
+    )
+    relations = [ready_relation if relation.id == admin_relation.id else relation for relation in state_out.relations]
+    state_out = dataclasses.replace(state_out, relations=relations)
+    with unittest.mock.patch("charm.execute") as execute:
+        state_out = context.run(context.on.relation_changed(ready_relation), state_out)
+
+    assert state_out.unit_status == ops.ActiveStatus()
+    assert execute.call_count == 4
 
 
 def test_ready(context, state, temporal_admin_container):
