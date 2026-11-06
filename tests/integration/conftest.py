@@ -3,13 +3,19 @@
 
 """Fixtures for jubilant tests."""
 
+import os
 import pathlib
 
 import jubilant
 import pytest
 import yaml
 
-POSTGRESQL_CHANNEL = "14/stable"
+# Allow overriding via environment variable for Juju 4.x nightly tests, which require
+# postgresql-k8s 16/stable (14/stable does not support juju 4.x).
+POSTGRESQL_CHANNEL = os.getenv("POSTGRESQL_CHANNEL") or "14/stable"
+# When set, deploy postgresql-k8s with force=True to bypass base checks.
+# Required when postgresql-k8s has not yet declared explicit support for juju 4.x.
+POSTGRESQL_FORCE = (os.getenv("POSTGRESQL_FORCE") or "").lower() in ("1", "true", "yes")
 
 # Temporal charm channels. Bump these when the charms migrate to a new track
 # (e.g. 1.23 -> 1.31).
@@ -17,6 +23,13 @@ TEMPORAL_CHANNEL = "1.31/edge"  # server dependency and the default admin deploy
 
 PREVIOUS_SERVER_CHANNEL = "1.30/edge"
 PREVIOUS_ADMIN_CHANNEL = "1.30/edge"
+TEMPORAL_ADMIN_LATEST_RELEASE_CHANNEL = "1.31/stable"  # published admin release the refresh test upgrades from
+# TEMPORAL_CHANNEL carries revisions for more than one base, and without a base
+# Juju picks the older one. Pin the base the current revisions are built for.
+TEMPORAL_BASE = "ubuntu@26.04"
+# The previous-track channels (e.g. 1.30/edge) only ship revisions built for
+# ubuntu@24.04. The refresh test upgrades the base via `juju refresh --base`.
+PREVIOUS_TEMPORAL_BASE = "ubuntu@24.04"
 
 TEMPORAL_SERVER_APP_NAME = "temporal-k8s"
 
@@ -29,6 +42,7 @@ def deploy_temporal_stack(
     postgresql_channel: str = POSTGRESQL_CHANNEL,
     temporal_channel: str = TEMPORAL_CHANNEL,
     temporal_admin_channel: str = TEMPORAL_CHANNEL,
+    temporal_admin_base: str = TEMPORAL_BASE,
 ):
     """Deploy the temporal stack.
 
@@ -37,6 +51,7 @@ def deploy_temporal_stack(
         postgresql_channel: channel of postgresql-k8s charm
         temporal_channel: channel of temporal-k8s charm
         temporal_admin_channel: channel of temporal-admin-k8s charm
+        temporal_admin_base: base of temporal-admin-k8s charm
     """
     juju.model_config(
         values={
@@ -44,12 +59,14 @@ def deploy_temporal_stack(
         },
     )
 
+    # No base: each postgresql-k8s track ships revisions for a single base
+    # (14/stable -> ubuntu@22.04, 16/stable -> ubuntu@24.04), so Juju resolves it.
     juju.deploy(
         charm="postgresql-k8s",
         app="postgresql-k8s",
         channel=postgresql_channel,
         trust=True,
-        base="ubuntu@22.04",
+        force=POSTGRESQL_FORCE,
     )
 
     juju.deploy(
@@ -59,14 +76,14 @@ def deploy_temporal_stack(
         config={
             "num-history-shards": 1,
         },
-        base="ubuntu@24.04",
+        base=temporal_admin_base,
     )
 
     juju.deploy(
         charm="temporal-admin-k8s",
         app="temporal-admin-k8s",
         channel=temporal_admin_channel,
-        base="ubuntu@24.04",
+        base=temporal_admin_base,
     )
 
     juju.integrate("temporal-k8s:db", "postgresql-k8s:database")
@@ -84,6 +101,7 @@ def admin_tools_previous_track(juju: jubilant.Juju):
         juju,
         temporal_channel=PREVIOUS_SERVER_CHANNEL,
         temporal_admin_channel=PREVIOUS_ADMIN_CHANNEL,
+        temporal_admin_base=PREVIOUS_TEMPORAL_BASE,
     )
     yield "temporal-admin-k8s"
 
