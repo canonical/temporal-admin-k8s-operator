@@ -398,7 +398,14 @@ class TemporalAdminK8SCharm(CharmBase):
                         connection["password"],
                     ]
                     if connection.get("tls", False):
-                        args[2:2] = ["--tls", "--tls-disable-host-verification"]
+                        if ca_bundle := self._ca_bundle:
+                            # The provider CA verifies the database certificate
+                            # (full hostname verification); without it the
+                            # connection falls back to skipping verification.
+                            container.push(CA_CERT_PATH, ca_bundle, make_dirs=True)
+                            args[2:2] = ["--tls", f"--tls-ca-file={CA_CERT_PATH}"]
+                        else:
+                            args[2:2] = ["--tls", "--tls-disable-host-verification"]
 
                     execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0", timeout=SCHEMA_MIGRATION_TIMEOUT)
                     execute(

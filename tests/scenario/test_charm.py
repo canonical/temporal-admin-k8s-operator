@@ -91,6 +91,65 @@ def test_install_sets_maintenance_without_migrating(context, state):
     assert state_out.unit_status == ops.MaintenanceStatus("installing temporal admin tools")
 
 
+def _tls_admin_state(state, admin_relation, database_connection_data):
+    """Return the state with `tls: true` on every database connection."""
+    tls_connections = {key: dict(value, tls=True) for key, value in database_connection_data.items()}
+    tls_relation = ops.testing.Relation(
+        "admin",
+        id=admin_relation.id,
+        remote_app_data={"database_connections": json.dumps(tls_connections)},
+    )
+    relations = [tls_relation if relation.id == admin_relation.id else relation for relation in state.relations]
+    return dataclasses.replace(state, relations=relations)
+
+
+def _sql_tool_tls_args(execute):
+    """Return the arg lists passed to temporal-sql-tool."""
+    return [
+        call.args[2:] for call in execute.call_args_list if len(call.args) > 1 and call.args[1] == "temporal-sql-tool"
+    ]
+
+
+def test_setup_schema_tls_database_uses_ca_bundle(
+    context, state, temporal_admin_container, admin_relation, database_connection_data, tmp_path
+):
+    """Pass --tls-ca-file so the DB certificate is fully verified when TLS is on."""
+    ca_relation = ops.testing.Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([CA_1])})
+    state = _tls_admin_state(state, admin_relation, database_connection_data)
+    state = dataclasses.replace(state, relations=list(state.relations) + [ca_relation])
+    container = dataclasses.replace(
+        temporal_admin_container,
+        mounts={"etc-temporal": ops.testing.Mount(location="/etc/temporal", source=tmp_path)},
+    )
+    state = dataclasses.replace(state, containers=[container])
+
+    with unittest.mock.patch("charm.execute") as execute:
+        context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    sql_args = _sql_tool_tls_args(execute)
+    assert sql_args
+    for args in sql_args:
+        assert "--tls" in args
+        assert f"--tls-ca-file={CA_PATH}" in args
+        assert "--tls-disable-host-verification" not in args
+
+
+def test_setup_schema_tls_database_without_ca_disables_verification(
+    context, state, temporal_admin_container, admin_relation, database_connection_data
+):
+    """Fall back to --tls-disable-host-verification when no CA is available."""
+    state = _tls_admin_state(state, admin_relation, database_connection_data)
+
+    with unittest.mock.patch("charm.execute") as execute:
+        context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    sql_args = _sql_tool_tls_args(execute)
+    assert sql_args
+    for args in sql_args:
+        assert "--tls" in args
+        assert "--tls-disable-host-verification" in args
+
+
 def test_ready_publishes_schema_state_on_admin_relation(context, state, temporal_admin_container, admin_relation):
     """Publish readiness and the workload version after migration."""
     with unittest.mock.patch("charm.execute"):
