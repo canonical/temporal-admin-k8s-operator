@@ -130,8 +130,39 @@ def test_setup_schema_tls_database_uses_ca_bundle(
     assert sql_args
     for args in sql_args:
         assert "--tls" in args
-        assert f"--tls-ca-file={CA_PATH}" in args
+        assert f"--tls-ca-file={DB_CA_PATH}" in args
         assert "--tls-disable-host-verification" not in args
+    # No tls_ca on the relation: the frontend CA bundle is used as fallback.
+    assert (tmp_path / "certs" / "db-ca.pem").read_text() == CA_1
+
+
+def test_setup_schema_tls_database_prefers_forwarded_db_ca(
+    context, state, temporal_admin_container, admin_relation, database_connection_data, tmp_path
+):
+    """A tls_ca forwarded on the admin relation wins over the frontend CA."""
+    ca_relation = ops.testing.Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([CA_1])})
+    tls_connections = {key: dict(value, tls=True, tls_ca=DB_CA) for key, value in database_connection_data.items()}
+    admin_relation = dataclasses.replace(
+        admin_relation, remote_app_data={"database_connections": json.dumps(tls_connections)}
+    )
+    relations = [admin_relation if relation.id == admin_relation.id else relation for relation in state.relations] + [
+        ca_relation
+    ]
+    state = dataclasses.replace(state, relations=relations)
+    container = dataclasses.replace(
+        temporal_admin_container,
+        mounts={"etc-temporal": ops.testing.Mount(location="/etc/temporal", source=tmp_path)},
+    )
+    state = dataclasses.replace(state, containers=[container])
+
+    with unittest.mock.patch("charm.execute") as execute:
+        context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    sql_args = _sql_tool_tls_args(execute)
+    assert sql_args
+    for args in sql_args:
+        assert f"--tls-ca-file={DB_CA_PATH}" in args
+    assert (tmp_path / "certs" / "db-ca.pem").read_text() == DB_CA
 
 
 def test_setup_schema_tls_database_without_ca_disables_verification(
@@ -264,7 +295,9 @@ def test_disconnected_actions_keep_their_own_failure_behavior(
 
 
 CA_1 = "-----BEGIN CERTIFICATE-----\nCA-ONE\n-----END CERTIFICATE-----"
+DB_CA = "-----BEGIN CERTIFICATE-----\nDB-CA\n-----END CERTIFICATE-----"
 CA_PATH = "/etc/temporal/certs/frontend-ca.pem"
+DB_CA_PATH = "/etc/temporal/certs/db-ca.pem"
 FRONTEND_HOST = "temporal-k8s.test.svc.cluster.local"
 
 
