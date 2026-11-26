@@ -36,7 +36,7 @@ lint = [
     "pylint",
     "pydocstyle",
     "pytest>=9,<10",
-    "black==23.12.1",
+    "black==26.10.1",
     "codespell==2.2.5",
     "flake8==7.0.0",
     "flake8-builtins==1.5.3",
@@ -51,7 +51,7 @@ lint = [
 
 # Formatting
 fmt = [
-    "black==23.12.1",
+    "black==26.10.1",
     "isort==5.12.0",
 ]
 
