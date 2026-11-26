@@ -15,7 +15,7 @@ charm = [
 
 # Unit test deps
 unit = [
-    "coverage[toml]==6.4.4",
+    "coverage[toml]==7.16.2",
     "ipdb==0.13.9",
     "pytest>=9,<10",
     "ops[testing]==2.21.1",
