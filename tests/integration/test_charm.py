@@ -110,7 +110,7 @@ class TestDeployment:
         run_cli_action(juju, namespace="tls")
 
     def test_openfga_relation(self, juju: jubilant.Juju):
-        """Add OpenFGA relation and authorization model, then verify cli is denied without a token."""
+        """Add OpenFGA relation and authorization model, verify cli is denied without a token."""
         juju.config(SERVER_APP_NAME, {"auth-enabled": True})
         juju.deploy("openfga-k8s", app="openfga-k8s", channel="latest/edge")
         juju.wait(
