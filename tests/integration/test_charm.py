@@ -110,7 +110,7 @@ class TestDeployment:
         run_cli_action(juju, namespace="tls")
 
     def test_openfga_relation(self, juju: jubilant.Juju):
-        """Add OpenFGA relation and authorization model."""
+        """Add OpenFGA relation and authorization model, then verify cli is denied without a token."""
         juju.config(SERVER_APP_NAME, {"auth-enabled": True})
         juju.deploy("openfga-k8s", app="openfga-k8s", channel="latest/edge")
         juju.wait(
@@ -160,7 +160,16 @@ class TestDeployment:
 
         assert juju.status().apps[APP_NAME].app_status.current == "active"
 
-        run_cli_action(juju, namespace="integrations")
+        # With auth enabled the frontend claim mapper rejects anonymous
+        # callers
+        with pytest.raises(TaskError) as exc_info:
+            juju.run(
+                f"{APP_NAME}/0",
+                "cli",
+                {"args": "operator namespace --namespace integrations create"},
+                wait=600,
+            )
+        assert "Request unauthorized" in exc_info.value.task.message
 
     def test_remove_server(self, juju: jubilant.Juju):
         """Admin charm goes to blocked state once relation with the server charm is removed."""
