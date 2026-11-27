@@ -91,6 +91,96 @@ def test_install_sets_maintenance_without_migrating(context, state):
     assert state_out.unit_status == ops.MaintenanceStatus("installing temporal admin tools")
 
 
+def _tls_admin_state(state, admin_relation, database_connection_data):
+    """Return the state with `tls: true` on every database connection."""
+    tls_connections = {key: dict(value, tls=True) for key, value in database_connection_data.items()}
+    tls_relation = ops.testing.Relation(
+        "admin",
+        id=admin_relation.id,
+        remote_app_data={"database_connections": json.dumps(tls_connections)},
+    )
+    relations = [tls_relation if relation.id == admin_relation.id else relation for relation in state.relations]
+    return dataclasses.replace(state, relations=relations)
+
+
+def _sql_tool_tls_args(execute):
+    """Return the arg lists passed to temporal-sql-tool."""
+    return [
+        call.args[2:] for call in execute.call_args_list if len(call.args) > 1 and call.args[1] == "temporal-sql-tool"
+    ]
+
+
+def test_setup_schema_tls_database_uses_ca_bundle(
+    context, state, temporal_admin_container, admin_relation, database_connection_data, tmp_path
+):
+    """Pass --tls-ca-file so the DB certificate is fully verified when TLS is on."""
+    ca_relation = ops.testing.Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([CA_1])})
+    state = _tls_admin_state(state, admin_relation, database_connection_data)
+    state = dataclasses.replace(state, relations=list(state.relations) + [ca_relation])
+    container = dataclasses.replace(
+        temporal_admin_container,
+        mounts={"etc-temporal": ops.testing.Mount(location="/etc/temporal", source=tmp_path)},
+    )
+    state = dataclasses.replace(state, containers=[container])
+
+    with unittest.mock.patch("charm.execute") as execute:
+        context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    sql_args = _sql_tool_tls_args(execute)
+    assert sql_args
+    for args in sql_args:
+        assert "--tls" in args
+        assert f"--tls-ca-file={DB_CA_PATH}" in args
+        assert "--tls-disable-host-verification" not in args
+    # No tls_ca on the relation: the frontend CA bundle is used as fallback.
+    assert (tmp_path / "certs" / "db-ca.pem").read_text() == CA_1
+
+
+def test_setup_schema_tls_database_prefers_forwarded_db_ca(
+    context, state, temporal_admin_container, admin_relation, database_connection_data, tmp_path
+):
+    """A tls_ca forwarded on the admin relation wins over the frontend CA."""
+    ca_relation = ops.testing.Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([CA_1])})
+    tls_connections = {key: dict(value, tls=True, tls_ca=DB_CA) for key, value in database_connection_data.items()}
+    admin_relation = dataclasses.replace(
+        admin_relation, remote_app_data={"database_connections": json.dumps(tls_connections)}
+    )
+    relations = [admin_relation if relation.id == admin_relation.id else relation for relation in state.relations] + [
+        ca_relation
+    ]
+    state = dataclasses.replace(state, relations=relations)
+    container = dataclasses.replace(
+        temporal_admin_container,
+        mounts={"etc-temporal": ops.testing.Mount(location="/etc/temporal", source=tmp_path)},
+    )
+    state = dataclasses.replace(state, containers=[container])
+
+    with unittest.mock.patch("charm.execute") as execute:
+        context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    sql_args = _sql_tool_tls_args(execute)
+    assert sql_args
+    for args in sql_args:
+        assert f"--tls-ca-file={DB_CA_PATH}" in args
+    assert (tmp_path / "certs" / "db-ca.pem").read_text() == DB_CA
+
+
+def test_setup_schema_tls_database_without_ca_disables_verification(
+    context, state, temporal_admin_container, admin_relation, database_connection_data
+):
+    """Fall back to --tls-disable-host-verification when no CA is available."""
+    state = _tls_admin_state(state, admin_relation, database_connection_data)
+
+    with unittest.mock.patch("charm.execute") as execute:
+        context.run(context.on.pebble_ready(temporal_admin_container), state)
+
+    sql_args = _sql_tool_tls_args(execute)
+    assert sql_args
+    for args in sql_args:
+        assert "--tls" in args
+        assert "--tls-disable-host-verification" in args
+
+
 def test_ready_publishes_schema_state_on_admin_relation(context, state, temporal_admin_container, admin_relation):
     """Publish readiness and the workload version after migration."""
     with unittest.mock.patch("charm.execute"):
@@ -205,7 +295,9 @@ def test_disconnected_actions_keep_their_own_failure_behavior(
 
 
 CA_1 = "-----BEGIN CERTIFICATE-----\nCA-ONE\n-----END CERTIFICATE-----"
+DB_CA = "-----BEGIN CERTIFICATE-----\nDB-CA\n-----END CERTIFICATE-----"
 CA_PATH = "/etc/temporal/certs/frontend-ca.pem"
+DB_CA_PATH = "/etc/temporal/certs/db-ca.pem"
 FRONTEND_HOST = "temporal-k8s.test.svc.cluster.local"
 
 

@@ -29,6 +29,7 @@ from ops.pebble import ExecError
 logger = logging.getLogger(__name__)
 RECEIVE_CA_CERT_RELATION_NAME = "receive-ca-cert"
 CA_CERT_PATH = "/etc/temporal/certs/frontend-ca.pem"
+DB_CA_CERT_PATH = "/etc/temporal/certs/db-ca.pem"
 WORKLOAD_VERSION = "1.31.2"
 SQL_TOOL = "temporal-sql-tool"
 SCHEMA_ROOT = "/etc/temporal/schema/postgresql/v12"
@@ -398,7 +399,14 @@ class TemporalAdminK8SCharm(CharmBase):
                         connection["password"],
                     ]
                     if connection.get("tls", False):
-                        args[2:2] = ["--tls", "--tls-disable-host-verification"]
+                        # Prefer the database CA forwarded on the admin
+                        # relation; fall back to the frontend CA bundle (they
+                        # commonly share an issuer), else skip verification.
+                        if db_ca := connection.get("tls_ca") or self._ca_bundle:
+                            container.push(DB_CA_CERT_PATH, db_ca, make_dirs=True)
+                            args[2:2] = ["--tls", f"--tls-ca-file={DB_CA_CERT_PATH}"]
+                        else:
+                            args[2:2] = ["--tls", "--tls-disable-host-verification"]
 
                     execute(container, SQL_TOOL, *args, "setup-schema", "-v", "0.0", timeout=SCHEMA_MIGRATION_TIMEOUT)
                     execute(
